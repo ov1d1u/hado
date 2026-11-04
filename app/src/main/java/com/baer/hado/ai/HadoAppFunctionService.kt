@@ -17,6 +17,8 @@ import com.baer.hado.data.model.HaState
 import com.baer.hado.data.model.TodoListFeature
 import com.baer.hado.data.repository.TodoRepository
 import com.baer.hado.widget.TodoWidgetWorker
+import com.google.android.appfunctions.schema.common.v1.tasks.CreateTaskParams
+import com.google.android.appfunctions.schema.common.v1.tasks.Task
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,7 +54,7 @@ data class AddedTask(
     serviceName = "HadoAppFunctionService",
     appFunctionXmlFileName = "hado_app_function_service",
 )
-abstract class BaseHadoAppFunctionService : AppFunctionService() {
+abstract class BaseHadoAppFunctionService : AppFunctionService(), HadoTaskSchema {
 
     @Inject internal lateinit var todoRepository: TodoRepository
 
@@ -62,8 +64,54 @@ abstract class BaseHadoAppFunctionService : AppFunctionService() {
      * Adds a task to one of the user's to-do lists in HAdo.
      *
      * Use this when the user asks to add, create or remember a task, reminder or to-do item.
-     * Pass listName only when the user names a list; without it the task goes to the
-     * user's first list. Only lists the user shows in HAdo can be used.
+     * The task goes to the user's first list; call addTask instead when the user names a list.
+     *
+     * @param params The task to add, with an optional due date and time.
+     */
+    @AppFunctionDeclaration(isDescribedByKDoc = true)
+    override suspend fun createTask(params: CreateTaskParams): Task = withContext(Dispatchers.IO) {
+        requireSignedIn()
+        val title = requireTitle(params.title)
+
+        val date = params.dateTime?.date?.let { day ->
+            runCatching { LocalDate.of(day.year, day.month, day.day) }.getOrElse {
+                throw AppFunctionInvalidArgumentException("The due date is not a real date.")
+            }
+        }
+        val allDay = params.allDay == true
+        val time = if (allDay) {
+            null
+        } else {
+            params.dateTime?.timeOfDay?.let { clock ->
+                runCatching {
+                    LocalTime.of(clock.hours, clock.minutes, clock.seconds)
+                }.getOrElse {
+                    throw AppFunctionInvalidArgumentException("The due time is not a real time.")
+                }
+            }
+        }
+        if (time != null && date == null) {
+            throw AppFunctionInvalidArgumentException("A due time needs a due date too.")
+        }
+
+        val description = params.description?.trim()?.takeIf { it.isNotEmpty() }
+        val list = findList(visibleLists(), null)
+        addToList(list, title, description, date, time)
+
+        Task(
+            title = title,
+            description = description,
+            completed = false,
+            dateTime = params.dateTime,
+            allDay = if (date == null) null else allDay || time == null,
+        )
+    }
+
+    /**
+     * Adds a task to a to-do list the user names.
+     *
+     * Use this only when the user names one of their HAdo lists. Call listTodoLists first when the
+     * list name is unclear. Without a name the task goes to the user's first list.
      *
      * @param title The task to add, as short text such as "Buy milk".
      * @param listName The name of the list to add the task to, as the user said it.
@@ -71,22 +119,57 @@ abstract class BaseHadoAppFunctionService : AppFunctionService() {
      * @param dueTime The time of day the task is due, when the user mentions one. Needs dueDate too.
      */
     @AppFunctionDeclaration(isDescribedByKDoc = true)
-    suspend fun createTask(
+    suspend fun addTask(
         title: String,
         listName: String? = null,
         dueDate: LocalDate? = null,
         dueTime: LocalTime? = null,
     ): AddedTask = withContext(Dispatchers.IO) {
         requireSignedIn()
-        val taskTitle = title.trim()
-        if (taskTitle.isEmpty()) {
-            throw AppFunctionInvalidArgumentException("The task needs a title.")
-        }
+        val taskTitle = requireTitle(title)
         if (dueTime != null && dueDate == null) {
             throw AppFunctionInvalidArgumentException("A due time needs a due date too.")
         }
 
         val list = findList(visibleLists(), listName)
+        val name = addToList(list, taskTitle, null, dueDate, dueTime)
+
+        AddedTask(
+            title = taskTitle,
+            listName = name,
+            dueDate = dueDate,
+            dueTime = dueTime,
+        )
+    }
+
+    /**
+     * Lists the names of the to-do lists the user shows in HAdo, in the order they appear there.
+     *
+     * Use this when the user asks which lists exist, or to find the exact name of a list
+     * before adding a task to it.
+     */
+    @AppFunctionDeclaration(isDescribedByKDoc = true)
+    suspend fun listTodoLists(): List<TodoListInfo> = withContext(Dispatchers.IO) {
+        requireSignedIn()
+        visibleLists().map { TodoListInfo(name = it.displayName()) }
+    }
+
+    private fun requireTitle(title: String): String {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) {
+            throw AppFunctionInvalidArgumentException("The task needs a title.")
+        }
+        return trimmed
+    }
+
+    /** Adds the task to [list] and returns the list name as the user sees it. */
+    private suspend fun addToList(
+        list: HaState,
+        title: String,
+        description: String?,
+        dueDate: LocalDate?,
+        dueTime: LocalTime?,
+    ): String {
         val name = list.displayName()
         val features = list.attributes.supportedFeatures ?: 0
         fun supports(feature: Int) = TodoListFeature.hasFeature(features, feature)
@@ -109,35 +192,18 @@ abstract class BaseHadoAppFunctionService : AppFunctionService() {
         val dueDateOnly = if (dueTime == null) dueDate?.toString() else null
         todoRepository.addItem(
             entityId = list.entityId,
-            summary = taskTitle,
+            summary = title,
+            description = description,
             dueDate = dueDateOnly,
             dueDatetime = dueDatetime,
-            position = AppPreferencesManager.loadAddItemPosition(applicationContext)
+            position = AppPreferencesManager.loadAddItemPosition(applicationContext),
         ).getOrElse { e ->
             throw AppFunctionAppUnknownException(
                 "The task could not be added to \"$name\": ${e.message}"
             )
         }
         TodoWidgetWorker.enqueueOneTime(applicationContext)
-
-        AddedTask(
-            title = taskTitle,
-            listName = name,
-            dueDate = dueDate,
-            dueTime = dueTime,
-        )
-    }
-
-    /**
-     * Lists the names of the to-do lists the user shows in HAdo, in the order they appear there.
-     *
-     * Use this when the user asks which lists exist, or to find the exact name of a list
-     * before adding a task to it.
-     */
-    @AppFunctionDeclaration(isDescribedByKDoc = true)
-    suspend fun listTodoLists(): List<TodoListInfo> = withContext(Dispatchers.IO) {
-        requireSignedIn()
-        visibleLists().map { TodoListInfo(name = it.displayName()) }
+        return name
     }
 
     private fun requireSignedIn() {
