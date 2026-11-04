@@ -184,7 +184,8 @@ fun TodoListEditor(
     initialItems: List<TodoItem> = emptyList(),
     refreshOnLaunch: Boolean = true,
     onItemsChanged: (List<TodoItem>) -> Unit = {},
-    onAddInputFocusChanged: (Boolean) -> Unit = {},
+    /** Inline "+ List item" row above the active items; off where a floating add button is used instead. */
+    showAddRow: Boolean = true,
     widgetAppWidgetId: Int? = null,
     autoFocusInput: Boolean = false,
     moveTargets: List<HaState> = emptyList(),
@@ -240,7 +241,7 @@ fun TodoListEditor(
 
     // Re-focus input field after adding an item (deferred to next frame)
     LaunchedEffect(refocusTrigger) {
-        if (refocusTrigger > 0) {
+        if (refocusTrigger > 0 && showAddRow) {
             listState.animateScrollToItem(addRowIndex())
             addFocusRequester.requestFocus()
             keyboardController?.show()
@@ -260,7 +261,6 @@ fun TodoListEditor(
     }
 
     LaunchedEffect(isAddInputFocused, imeVisible, items.count { !it.isCompleted }, showListHeader) {
-        onAddInputFocusChanged(isAddInputFocused)
         if (isAddInputFocused) {
             listState.animateScrollToItem(addRowIndex())
         }
@@ -270,10 +270,7 @@ fun TodoListEditor(
         clearAddInputFocus(
             focusManager = focusManager,
             keyboardController = keyboardController,
-            onFocusChanged = {
-                isAddInputFocused = false
-                onAddInputFocusChanged(false)
-            }
+            onFocusChanged = { isAddInputFocused = false }
         )
     }
 
@@ -314,7 +311,7 @@ fun TodoListEditor(
 
     // Auto-focus add input on first load when requested (e.g. widget list header tap)
     LaunchedEffect(Unit) {
-        if (autoFocusInput) {
+        if (autoFocusInput && showAddRow) {
             // Delay to ensure window has gained input focus and layout is complete
             delay(350)
             refocusTrigger++
@@ -806,16 +803,18 @@ fun TodoListEditor(
                 }
 
                 // Add item row (above uncompleted items)
-                item(key = "add-item-row") {
-                    AddItemRow(
-                        text = newItemText,
-                        onTextChange = { newItemText = it },
-                        onAdd = { addItem(newItemText) },
-                        focusRequester = addFocusRequester,
-                        onFocusChanged = { isFocused ->
-                            isAddInputFocused = isFocused
-                        }
-                    )
+                if (showAddRow) {
+                    item(key = "add-item-row") {
+                        AddItemRow(
+                            text = newItemText,
+                            onTextChange = { newItemText = it },
+                            onAdd = { addItem(newItemText) },
+                            focusRequester = addFocusRequester,
+                            onFocusChanged = { isFocused ->
+                                isAddInputFocused = isFocused
+                            }
+                        )
+                    }
                 }
 
                 // Uncompleted items with drag handles

@@ -150,6 +150,7 @@
     <string name="settings_widget_mic_desc">Mikrofon neben + anzeigen, um Einträge per Sprache hinzuzufügen</string>
     <string name="quick_add_open_list">Liste öffnen</string>
     <string name="quick_add_pick_date">Datum</string>
+    <string name="quick_add_pick_date_time">Datum und Uhrzeit</string>
     <string name="quick_add_listening">Höre zu…</string>
     <string name="cd_voice_input">Per Sprache hinzufügen</string>
     <string name="cd_close">Schließen</string>
@@ -242,4 +243,9 @@
     <string name="dialog_sign_out_server_message">Widgets mit diesem Server bleiben leer, bis in ihren Einstellungen ein anderer Server gewählt wird.</string>
     <string name="action_sign_out">Abmelden</string>
     <string name="widget_server_removed">Server entfernt. Server in den Widget-Einstellungen wählen.</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">Alle Listen sind ausgeblendet.\nHake eine Liste unter Einstellungen > Listensymbole an.</string>
+    <string name="settings_list_visibility_hint">Entferne das Häkchen, um eine Liste in der App auszublenden.</string>
+    <string name="cd_show_list_in_app">Diese Liste in der App anzeigen</string>
 </resources>

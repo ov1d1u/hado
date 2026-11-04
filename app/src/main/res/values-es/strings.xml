@@ -122,6 +122,7 @@
     <string name="settings_widget_mic_desc">Mostrar un micrófono junto a + para agregar elementos por voz</string>
     <string name="quick_add_open_list">Abrir lista</string>
     <string name="quick_add_pick_date">Fecha</string>
+    <string name="quick_add_pick_date_time">Fecha y hora</string>
     <string name="quick_add_listening">Escuchando…</string>
     <string name="cd_voice_input">Agregar por voz</string>
     <string name="cd_close">Cerrar</string>
@@ -242,4 +243,9 @@
     <string name="dialog_sign_out_server_message">Los widgets que usan este servidor quedan vacíos hasta que elijas otro servidor en su configuración.</string>
     <string name="action_sign_out">Cerrar sesión</string>
     <string name="widget_server_removed">Servidor eliminado. Elige un servidor en la configuración del widget.</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">Todas las listas están ocultas.\nMarca una lista en Ajustes > Iconos de listas.</string>
+    <string name="settings_list_visibility_hint">Desmarca una lista para ocultarla en la app.</string>
+    <string name="cd_show_list_in_app">Mostrar esta lista en la app</string>
 </resources>

@@ -4,15 +4,9 @@ package com.baer.hado.ui.home
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -52,6 +46,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -98,6 +93,7 @@ import com.baer.hado.data.model.TodoItem
 import com.baer.hado.ui.theme.AppSpacing
 import com.baer.hado.widget.ListIconManager
 import com.baer.hado.widget.ListIconPreview
+import com.baer.hado.widget.QuickAddActivity
 import com.baer.hado.widget.TodoListEditor
 import com.baer.hado.widget.WidgetHttpClient
 import kotlinx.coroutines.delay
@@ -124,12 +120,31 @@ fun HomeScreen(
     val selectedListIndex = uiState.todoLists.indexOfFirst { it.entityId == uiState.selectedListId }
         .let { index -> if (index >= 0) index else 0 }
     val selectedListName = selectedList?.attributes?.friendlyName ?: uiState.selectedListId
-    var isAddInputFocused by remember { mutableStateOf(false) }
     val selectedItems = uiState.itemsFor(selectedList?.entityId)
     val listSelectorState = rememberLazyListState()
 
-    LaunchedEffect(selectedList?.entityId) {
-        isAddInputFocused = false
+    // The quick add card runs as its own activity and hands the saved item back here.
+    val quickAddLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val listId = uiState.selectedListId ?: return@rememberLauncherForActivityResult
+        val summary = result.data?.getStringExtra(QuickAddActivity.EXTRA_ADDED_SUMMARY)
+        if (summary != null) {
+            viewModel.showPendingItem(
+                entityId = listId,
+                summary = summary,
+                due = result.data?.getStringExtra(QuickAddActivity.EXTRA_ADDED_DUE)
+            )
+        } else {
+            viewModel.loadItems(listId, force = true)
+        }
+    }
+
+    // Settings can change which lists are shown while Home sits on the back stack.
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.refreshVisibleLists()
+        }
     }
 
     LaunchedEffect(lifecycleOwner, uiState.selectedListId) {
@@ -259,7 +274,25 @@ fun HomeScreen(
                 }
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            if (selectedList != null) {
+                FloatingActionButton(
+                    onClick = {
+                        quickAddLauncher.launch(
+                            Intent(context, QuickAddActivity::class.java).apply {
+                                putExtra("entity_id", selectedList.entityId)
+                                putExtra("list_name", selectedListName ?: selectedList.entityId)
+                                putExtra("supported_features", selectedList.attributes.supportedFeatures ?: 0)
+                                putExtra("from_app", true)
+                            }
+                        )
+                    }
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_add_item))
+                }
+            }
+        }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -267,43 +300,33 @@ fun HomeScreen(
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(headerToEditorGap)
         ) {
-            AnimatedVisibility(
-                visible = !isAddInputFocused,
-                enter = fadeIn(animationSpec = tween(180)) +
-                    expandVertically(animationSpec = tween(220), expandFrom = Alignment.Top) +
-                    slideInVertically(animationSpec = tween(220), initialOffsetY = { -it / 3 }),
-                exit = fadeOut(animationSpec = tween(120)) +
-                    shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) +
-                    slideOutVertically(animationSpec = tween(180), targetOffsetY = { -it / 2 })
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.cardGap)) {
-                    HomeOverviewCard(
-                        accountId = uiState.activeServerId,
-                        listEntityId = selectedList?.entityId,
-                        listName = selectedListName,
-                        activeCount = activeCount,
-                        completedCount = completedCount,
-                        overdueCount = overdueCount,
-                        compact = false,
-                        onDeleteCurrentList = if (uiState.isLocalMode && uiState.selectedListId != null) {
-                            { showDeleteListDialog = true }
-                        } else {
-                            null
-                        }
-                    )
-
-                    if (uiState.todoLists.size > 1) {
-                        ListSelector(
-                            lists = uiState.todoLists.map {
-                                it.entityId to (it.attributes.friendlyName ?: it.entityId)
-                            },
-                            selectedId = uiState.selectedListId,
-                            listState = listSelectorState,
-                            onSelect = viewModel::selectList,
-                            onReorder = viewModel::reorderLists,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.cardGap)) {
+                HomeOverviewCard(
+                    accountId = uiState.activeServerId,
+                    listEntityId = selectedList?.entityId,
+                    listName = selectedListName,
+                    activeCount = activeCount,
+                    completedCount = completedCount,
+                    overdueCount = overdueCount,
+                    compact = false,
+                    onDeleteCurrentList = if (uiState.isLocalMode && uiState.selectedListId != null) {
+                        { showDeleteListDialog = true }
+                    } else {
+                        null
                     }
+                )
+
+                if (uiState.todoLists.size > 1) {
+                    ListSelector(
+                        lists = uiState.todoLists.map {
+                            it.entityId to (it.attributes.friendlyName ?: it.entityId)
+                        },
+                        selectedId = uiState.selectedListId,
+                        listState = listSelectorState,
+                        onSelect = viewModel::selectList,
+                        onReorder = viewModel::reorderLists,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
 
@@ -320,8 +343,11 @@ fun HomeScreen(
                 }
                 uiState.todoLists.isEmpty() && !uiState.isLoadingLists -> {
                     EmptyStateCard(
-                        text = if (uiState.isLocalMode) stringResource(R.string.home_no_lists_local)
-                        else stringResource(R.string.home_no_lists_ha),
+                        text = when {
+                            uiState.allListsHidden -> stringResource(R.string.home_all_lists_hidden)
+                            uiState.isLocalMode -> stringResource(R.string.home_no_lists_local)
+                            else -> stringResource(R.string.home_no_lists_ha)
+                        },
                         modifier = Modifier.padding(horizontal = AppSpacing.screenHorizontal)
                     )
                 }
@@ -375,17 +401,14 @@ fun HomeScreen(
                             modifier = Modifier.fillMaxSize(),
                             showTopBar = false,
                             showListHeader = false,
-                            contentBottomPadding = 24.dp,
+                            // Clears the floating add button so the last item stays reachable.
+                            contentBottomPadding = 88.dp,
                             initialItems = uiState.itemsFor(pageList.entityId),
                             refreshOnLaunch = false,
                             onItemsChanged = { items ->
                                 viewModel.updateCachedItems(pageList.entityId, items)
                             },
-                            onAddInputFocusChanged = { isFocused ->
-                                if (pageList.entityId == uiState.selectedListId) {
-                                    isAddInputFocused = isFocused
-                                }
-                            },
+                            showAddRow = false,
                             moveTargets = uiState.todoLists.filter { it.entityId != pageList.entityId },
                             onItemMoved = { targetId -> viewModel.loadItems(targetId, force = true) }
                         )

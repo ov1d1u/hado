@@ -120,6 +120,7 @@
     <string name="settings_widget_mic_desc">Microfoon naast + tonen om items met spraak toe te voegen</string>
     <string name="quick_add_open_list">Lijst openen</string>
     <string name="quick_add_pick_date">Datum</string>
+    <string name="quick_add_pick_date_time">Datum en tijd</string>
     <string name="quick_add_listening">Luistert…</string>
     <string name="cd_voice_input">Met spraak toevoegen</string>
     <string name="cd_close">Sluiten</string>
@@ -240,4 +241,9 @@
     <string name="dialog_sign_out_server_message">Widgets die deze server gebruiken blijven leeg tot je in hun instellingen een andere server kiest.</string>
     <string name="action_sign_out">Afmelden</string>
     <string name="widget_server_removed">Server verwijderd. Kies een server in de widgetinstellingen.</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">Alle lijsten zijn verborgen.\nVink een lijst aan bij Instellingen > Lijstpictogrammen.</string>
+    <string name="settings_list_visibility_hint">Vink een lijst uit om deze in de app te verbergen.</string>
+    <string name="cd_show_list_in_app">Deze lijst in de app tonen</string>
 </resources>

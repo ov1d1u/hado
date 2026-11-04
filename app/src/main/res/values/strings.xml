@@ -151,6 +151,7 @@
     <string name="settings_widget_mic_desc">Show a microphone next to + to add items by voice</string>
     <string name="quick_add_open_list">Open list</string>
     <string name="quick_add_pick_date">Date</string>
+    <string name="quick_add_pick_date_time">Date and time</string>
     <string name="quick_add_listening">Listening…</string>
     <string name="cd_voice_input">Add by voice</string>
     <string name="cd_close">Close</string>
@@ -245,4 +246,9 @@
     <string name="dialog_sign_out_server_message">Widgets that use this server stay empty until you choose another server in their settings.</string>
     <string name="action_sign_out">Sign out</string>
     <string name="widget_server_removed">Server removed. Choose a server in the widget settings.</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">All lists are hidden.\nTick a list under Settings > List Icons to show it.</string>
+    <string name="settings_list_visibility_hint">Uncheck a list to hide it from the app.</string>
+    <string name="cd_show_list_in_app">Show this list in the app</string>
 </resources>

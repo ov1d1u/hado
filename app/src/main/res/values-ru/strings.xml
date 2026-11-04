@@ -122,6 +122,7 @@
     <string name="settings_widget_mic_desc">Показывать микрофон рядом с + для добавления голосом</string>
     <string name="quick_add_open_list">Открыть список</string>
     <string name="quick_add_pick_date">Дата</string>
+    <string name="quick_add_pick_date_time">Дата и время</string>
     <string name="quick_add_listening">Слушаю…</string>
     <string name="cd_voice_input">Добавить голосом</string>
     <string name="cd_close">Закрыть</string>
@@ -244,4 +245,9 @@
     <string name="dialog_sign_out_server_message">Виджеты с этим сервером останутся пустыми, пока в их настройках не будет выбран другой сервер.</string>
     <string name="action_sign_out">Выйти</string>
     <string name="widget_server_removed">Сервер удалён. Выберите сервер в настройках виджета.</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">Все списки скрыты.\nОтметьте список в «Настройки > Значки списков».</string>
+    <string name="settings_list_visibility_hint">Снимите отметку, чтобы скрыть список в приложении.</string>
+    <string name="cd_show_list_in_app">Показывать этот список в приложении</string>
 </resources>

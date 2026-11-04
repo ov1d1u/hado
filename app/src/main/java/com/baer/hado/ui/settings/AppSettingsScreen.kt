@@ -41,6 +41,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -127,6 +129,9 @@ fun AppSettingsScreen(
     var showTimingDialog by remember { mutableStateOf(false) }
     var showCadenceDialog by remember { mutableStateOf(false) }
     var showNotificationListsDialog by remember { mutableStateOf(false) }
+    var hiddenListIds by remember {
+        mutableStateOf(AppPreferencesManager.loadHiddenLists(context, activeAccountId))
+    }
 
     var availableLists by remember { mutableStateOf<List<Triple<String, String, String?>>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -162,6 +167,18 @@ fun AppSettingsScreen(
         notificationSettings = notificationSettings.copy(selectedListIds = validSelectedIds)
         OverdueNotificationSettingsManager.save(context, notificationSettings, activeAccountId)
         OverdueNotificationScheduler.reschedule(context)
+    }
+
+    // Forget lists that no longer exist, so a recreated list does not come back hidden.
+    LaunchedEffect(isLoading, availableLists) {
+        if (isLoading || hiddenListIds.isEmpty()) return@LaunchedEffect
+
+        val availableIds = availableLists.mapTo(mutableSetOf()) { it.first }
+        val stillThere = hiddenListIds.intersect(availableIds)
+        if (stillThere == hiddenListIds) return@LaunchedEffect
+
+        hiddenListIds = stillThere
+        AppPreferencesManager.saveHiddenLists(context, activeAccountId, stillThere)
     }
 
     Scaffold(
@@ -224,7 +241,16 @@ fun AppSettingsScreen(
                     }
                 }
             } else if (availableLists.isNotEmpty()) {
-                AppListIconsSection(availableLists = availableLists, accountId = activeAccountId)
+                AppListIconsSection(
+                    availableLists = availableLists,
+                    accountId = activeAccountId,
+                    hiddenListIds = hiddenListIds,
+                    onShownChanged = { entityId, shown ->
+                        val updated = if (shown) hiddenListIds - entityId else hiddenListIds + entityId
+                        hiddenListIds = updated
+                        AppPreferencesManager.saveHiddenLists(context, activeAccountId, updated)
+                    }
+                )
             }
 
             SettingsSection(title = stringResource(R.string.section_behavior)) {
@@ -379,9 +405,9 @@ fun AppSettingsScreen(
                     SettingsItem(
                         headline = stringResource(R.string.settings_notification_lists),
                         supporting = stringResource(R.string.settings_notification_lists_supporting),
-                        trailingText = notificationListSummary(
+                        trailingText = listSelectionSummary(
                             context = context,
-                            settings = notificationSettings,
+                            selectedListIds = notificationSettings.selectedListIds,
                             availableLists = availableLists
                         ),
                         onClick = { showNotificationListsDialog = true },
@@ -578,7 +604,8 @@ fun AppSettingsScreen(
     }
 
     if (showNotificationListsDialog) {
-        NotificationListsDialog(
+        ListSelectionDialog(
+            title = stringResource(R.string.settings_notification_lists),
             availableLists = availableLists,
             selectedListIds = notificationSettings.selectedListIds,
             onDismiss = { showNotificationListsDialog = false },
@@ -672,17 +699,18 @@ private fun ServerDialog(
     )
 }
 
-private fun notificationListSummary(
+/** Trailing text for a list selection: the name, a count, or "All lists" when nothing is picked. */
+private fun listSelectionSummary(
     context: android.content.Context,
-    settings: OverdueNotificationSettings,
+    selectedListIds: Set<String>,
     availableLists: List<Triple<String, String, String?>>
 ): String {
-    if (settings.selectedListIds.isEmpty()) {
+    if (selectedListIds.isEmpty()) {
         return context.getString(R.string.settings_all_lists)
     }
 
     val selectedNames = availableLists
-        .filter { it.first in settings.selectedListIds }
+        .filter { it.first in selectedListIds }
         .map { it.second }
 
     return when (selectedNames.size) {
@@ -813,7 +841,9 @@ private fun AboutSection() {
 @Composable
 private fun AppListIconsSection(
     availableLists: List<Triple<String, String, String?>>,
-    accountId: String?
+    accountId: String?,
+    hiddenListIds: Set<String>,
+    onShownChanged: (entityId: String, shown: Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -825,6 +855,7 @@ private fun AppListIconsSection(
     var iconDialogHaIcon by remember { mutableStateOf<String?>(null) }
     var iconDialogResolvedIcon by remember { mutableStateOf<ListIconManager.ResolvedIcon?>(null) }
     var iconVersion by remember { mutableIntStateOf(0) }
+    val showInAppDescription = stringResource(R.string.cd_show_list_in_app)
 
     LaunchedEffect(context) {
         syncAvailability = withContext(Dispatchers.IO) {
@@ -861,20 +892,29 @@ private fun AppListIconsSection(
             )
         }
 
+        Text(
+            text = stringResource(R.string.settings_list_visibility_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+        )
+
         availableLists.forEach { (entityId, name, haIcon) ->
             val resolved = remember(entityId, iconVersion) {
                 ListIconManager.resolveIcon(context, iconKey(entityId), haIcon)
             }
 
+            val isShown = entityId !in hiddenListIds
+
             SettingsItem(
                 headline = name,
                 supporting = stringResource(R.string.label_tap_to_change),
                 onClick = {
-                        iconDialogEntityId = entityId
-                        iconDialogListName = name
-                        iconDialogHaIcon = haIcon
+                    iconDialogEntityId = entityId
+                    iconDialogListName = name
+                    iconDialogHaIcon = haIcon
                     iconDialogResolvedIcon = resolved
-                    },
+                },
                 leadingContent = {
                     resolved?.let {
                         ListIconPreview(
@@ -885,7 +925,15 @@ private fun AppListIconsSection(
                         )
                     } ?: NoIconPlaceholder()
                 },
-                trailingText = stringResource(R.string.label_tap_to_change)
+                trailingContent = {
+                    Checkbox(
+                        checked = isShown,
+                        onCheckedChange = { checked -> onShownChanged(entityId, checked) },
+                        modifier = Modifier.semantics {
+                            contentDescription = showInAppDescription
+                        }
+                    )
+                }
             )
 
             if (entityId != availableLists.last().first) {
@@ -1071,8 +1119,10 @@ private fun <T> SingleChoiceSettingsDialog(
     )
 }
 
+/** Picks a subset of the lists, where no selection at all means "all lists". */
 @Composable
-private fun NotificationListsDialog(
+private fun ListSelectionDialog(
+    title: String,
     availableLists: List<Triple<String, String, String?>>,
     selectedListIds: Set<String>,
     onDismiss: () -> Unit,
@@ -1082,7 +1132,7 @@ private fun NotificationListsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_notification_lists)) },
+        title = { Text(title) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -1196,7 +1246,9 @@ private fun SettingsItem(
     trailingText: String? = null,
     headlineColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
     onClick: (() -> Unit)? = null,
-    leadingContent: (@Composable () -> Unit)? = null
+    leadingContent: (@Composable () -> Unit)? = null,
+    /** Trailing control, e.g. a checkbox; it handles its own taps. */
+    trailingContent: (@Composable () -> Unit)? = null
 ) {
     Row(
         modifier = modifier
@@ -1244,6 +1296,8 @@ private fun SettingsItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+
+        trailingContent?.invoke()
     }
 }
 

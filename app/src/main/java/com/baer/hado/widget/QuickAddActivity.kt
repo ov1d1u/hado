@@ -28,14 +28,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -45,7 +45,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
@@ -85,15 +88,23 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.time.format.FormatStyle
 
 /**
- * Small add-item card floating above the keyboard over the home screen (widget + / mic tap).
- * Stays open after each add so several items can be entered in a row.
+ * Small add-item card floating above the keyboard over the home screen (widget + / mic tap)
+ * and over the app (floating + button). Save adds the item and closes the card.
  */
 class QuickAddActivity : ComponentActivity() {
+
+    companion object {
+        /** Item the user saved, handed back to the app so it can write and show it. */
+        const val EXTRA_ADDED_SUMMARY = "added_summary"
+        const val EXTRA_ADDED_DUE = "added_due"
+    }
 
     // Outlives the activity so writes complete after finish(); the mutex keeps add order.
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -123,25 +134,38 @@ class QuickAddActivity : ComponentActivity() {
         }
 
         val supportsDueDate = TodoListFeature.hasFeature(supportedFeatures, TodoListFeature.SET_DUE_DATE_ON_ITEM)
+        val supportsDueDatetime = TodoListFeature.hasFeature(supportedFeatures, TodoListFeature.SET_DUE_DATETIME_ON_ITEM)
+        // Opened from the app itself: the list is already on screen behind the card.
+        val fromApp = intent.getBooleanExtra("from_app", false)
 
         setContent {
             HadoTheme {
                 QuickAddCard(
                     listName = listName,
-                    supportsDueDate = supportsDueDate,
+                    supportsDueDate = supportsDueDate || supportsDueDatetime,
+                    supportsDueDatetime = supportsDueDatetime,
                     startVoice = startVoice,
                     onAdd = { text, due ->
-                        persist(entityId, text, due?.toString(), isLocalMode, accountId, targetAppWidgetId)
+                        persist(entityId, text, due, isLocalMode, accountId, targetAppWidgetId)
+                        // Hand the item back so the app can show it while the write is in flight.
+                        setResult(
+                            RESULT_OK,
+                            Intent()
+                                .putExtra(EXTRA_ADDED_SUMMARY, text)
+                                .putExtra(EXTRA_ADDED_DUE, due)
+                        )
                     },
-                    onOpenList = {
-                        startActivity(Intent(this, AddItemActivity::class.java).apply {
-                            putExtra("entity_id", entityId)
-                            putExtra("list_name", listName)
-                            putExtra("supported_features", supportedFeatures)
-                            putExtra("app_widget_id", targetAppWidgetId ?: AppWidgetManager.INVALID_APPWIDGET_ID)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        })
-                        finish()
+                    onOpenList = if (fromApp) null else {
+                        {
+                            startActivity(Intent(this, AddItemActivity::class.java).apply {
+                                putExtra("entity_id", entityId)
+                                putExtra("list_name", listName)
+                                putExtra("supported_features", supportedFeatures)
+                                putExtra("app_widget_id", targetAppWidgetId ?: AppWidgetManager.INVALID_APPWIDGET_ID)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            })
+                            finish()
+                        }
                     },
                     onDismiss = { finish() }
                 )
@@ -202,7 +226,11 @@ class QuickAddActivity : ComponentActivity() {
             val body = buildMap {
                 put("entity_id", entityId)
                 put("item", text)
-                if (due != null) put("due_date", due)
+                // HA takes a datetime only under due_datetime, and as "YYYY-MM-DD HH:mm:ss".
+                if (due != null) {
+                    if (due.contains("T")) put("due_datetime", due.replace("T", " "))
+                    else put("due_date", due)
+                }
             }
             val ok = httpClient.post("api/services/todo/add_item", gson.toJson(body))?.use { resp ->
                 if (!resp.isSuccessful) Log.e("HAdo", "Quick add failed: ${resp.code}")
@@ -236,14 +264,17 @@ class QuickAddActivity : ComponentActivity() {
 private fun QuickAddCard(
     listName: String,
     supportsDueDate: Boolean,
+    supportsDueDatetime: Boolean,
     startVoice: Boolean,
-    onAdd: (String, LocalDate?) -> Unit,
-    onOpenList: () -> Unit,
+    onAdd: (String, String?) -> Unit,
+    onOpenList: (() -> Unit)?,
     onDismiss: () -> Unit
 ) {
     var field by remember { mutableStateOf(TextFieldValue("")) }
-    var due by remember { mutableStateOf<LocalDate?>(null) }
+    // ISO due, either "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm:00".
+    var due by remember { mutableStateOf<String?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val noRipple = remember { MutableInteractionSource() }
@@ -256,7 +287,7 @@ private fun QuickAddCard(
         prompt = listName,
         onPartial = { setText(it) },
         onResult = {
-            // Prefilled only: the user confirms with send.
+            // Prefilled only: the user confirms with Save.
             setText(it)
             focusRequester.requestFocus()
             keyboard?.show()
@@ -267,8 +298,8 @@ private fun QuickAddCard(
         val text = field.text.trim()
         if (text.isEmpty()) return
         onAdd(text, due)
-        setText("")
-        due = null
+        // The add outlives this window, so the card can close right away.
+        onDismiss()
     }
 
     LaunchedEffect(Unit) {
@@ -310,8 +341,10 @@ private fun QuickAddCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(onClick = onOpenList) {
-                        Text(stringResource(R.string.quick_add_open_list))
+                    if (onOpenList != null) {
+                        TextButton(onClick = onOpenList) {
+                            Text(stringResource(R.string.quick_add_open_list))
+                        }
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_close))
@@ -336,9 +369,9 @@ private fun QuickAddCard(
                         shape = RoundedCornerShape(16.dp),
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
-                            imeAction = ImeAction.Send
+                            imeAction = ImeAction.Done
                         ),
-                        keyboardActions = KeyboardActions(onSend = { submit() }),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
                         trailingIcon = if (voice.available) {
                             {
                                 IconButton(onClick = { if (voice.listening) voice.stop() else voice.start() }) {
@@ -353,38 +386,25 @@ private fun QuickAddCard(
                         } else null
                     )
                     Spacer(Modifier.width(4.dp))
-                    FilledIconButton(onClick = { submit() }, enabled = field.text.isNotBlank()) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = stringResource(R.string.cd_add_item)
-                        )
+                    Button(onClick = { submit() }, enabled = field.text.isNotBlank()) {
+                        Text(stringResource(R.string.action_save))
                     }
                 }
                 if (supportsDueDate) {
-                    val today = LocalDate.now()
-                    val tomorrow = today.plusDays(1)
-                    val customDue = due?.takeIf { it != today && it != tomorrow }
+                    val context = LocalContext.current
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.padding(top = 4.dp)
                     ) {
                         FilterChip(
-                            selected = due == today,
-                            onClick = { due = if (due == today) null else today },
-                            label = { Text(stringResource(R.string.due_today)) }
-                        )
-                        FilterChip(
-                            selected = due == tomorrow,
-                            onClick = { due = if (due == tomorrow) null else tomorrow },
-                            label = { Text(stringResource(R.string.due_tomorrow)) }
-                        )
-                        FilterChip(
-                            selected = customDue != null,
+                            selected = due != null,
                             onClick = { showDatePicker = true },
                             label = {
                                 Text(
-                                    customDue?.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
-                                        ?: stringResource(R.string.quick_add_pick_date)
+                                    due?.let { formatDue(context, it) } ?: stringResource(
+                                        if (supportsDueDatetime) R.string.quick_add_pick_date_time
+                                        else R.string.quick_add_pick_date
+                                    )
                                 )
                             },
                             leadingIcon = {
@@ -393,7 +413,18 @@ private fun QuickAddCard(
                                     contentDescription = null,
                                     modifier = Modifier.size(FilterChipDefaults.IconSize)
                                 )
-                            }
+                            },
+                            trailingIcon = if (due != null) {
+                                {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = stringResource(R.string.cd_clear_due_date),
+                                        modifier = Modifier
+                                            .size(FilterChipDefaults.IconSize)
+                                            .clickable { due = null }
+                                    )
+                                }
+                            } else null
                         )
                     }
                 }
@@ -401,9 +432,11 @@ private fun QuickAddCard(
         }
     }
 
+    // The picker works in UTC midnight epoch millis, so convert with ZoneOffset.UTC both ways —
+    // a local offset would shift the date by a day for users ahead of UTC.
     if (showDatePicker) {
         val pickerState = rememberDatePickerState(
-            initialSelectedDateMillis = (due ?: LocalDate.now())
+            initialSelectedDateMillis = (parseDueDate(due) ?: LocalDate.now())
                 .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
         )
         DatePickerDialog(
@@ -411,9 +444,13 @@ private fun QuickAddCard(
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let {
-                        due = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                        val date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                        // Keep any time already picked, so reopening the date step does not drop it.
+                        val time = due?.substringAfter("T", "")?.takeIf { part -> part.isNotEmpty() }
+                        due = if (time != null) "${date}T$time" else date.toString()
                     }
                     showDatePicker = false
+                    if (supportsDueDatetime) showTimePicker = true
                 }) { Text(stringResource(android.R.string.ok)) }
             },
             dismissButton = {
@@ -425,4 +462,59 @@ private fun QuickAddCard(
             DatePicker(state = pickerState)
         }
     }
+
+    if (showTimePicker && supportsDueDatetime) {
+        val existing = parseDueTime(due)
+        val timePickerState = rememberTimePickerState(
+            initialHour = existing?.hour ?: 12,
+            initialMinute = existing?.minute ?: 0
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text(stringResource(R.string.dialog_set_time)) },
+            text = { TimePicker(state = timePickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val date = due?.substringBefore("T")
+                    if (date != null) {
+                        due = "${date}T%02d:%02d:00".format(timePickerState.hour, timePickerState.minute)
+                    }
+                    showTimePicker = false
+                }) { Text(stringResource(R.string.action_ok)) }
+            },
+            dismissButton = {
+                // Skipping the time keeps the date-only due.
+                TextButton(onClick = { showTimePicker = false }) {
+                    Text(stringResource(R.string.action_skip_time))
+                }
+            }
+        )
+    }
+}
+
+private fun parseDueDate(due: String?): LocalDate? = due?.substringBefore("T")?.let {
+    try {
+        LocalDate.parse(it)
+    } catch (_: DateTimeParseException) {
+        null
+    }
+}
+
+private fun parseDueTime(due: String?): LocalTime? = due?.substringAfter("T", "")
+    ?.takeIf { it.isNotEmpty() }
+    ?.let {
+        try {
+            LocalTime.parse(it)
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    }
+
+/** Chip label for the picked due: localized date, plus the time when one was set. */
+private fun formatDue(context: android.content.Context, due: String): String {
+    val date = parseDueDate(due) ?: return due
+    val dateText = date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+    val time = parseDueTime(due) ?: return dateText
+    val pattern = if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    return "$dateText ${time.format(DateTimeFormatter.ofPattern(pattern))}"
 }

@@ -5,6 +5,16 @@ All notable changes to HAdo will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Choose which to-do lists appear in the app: untick a list in Settings > List Icons (per server; the widget keeps its own list selection)
+
+### Changed
+- In the app, add items with the floating + button instead of the inline "List item" field; it opens the same quick add card the widget uses
+- The quick add card now has a Save button and closes once the item is added, instead of the send icon that kept it open for the next item
+- The quick add card now offers one "Date and time" button instead of Today, Tomorrow and Date: pick a date, then a time when the list supports due times (skip the time for a date-only due)
+
 ## [1.4.0] - 2026-10-16
 
 ### Added

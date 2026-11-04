@@ -120,6 +120,7 @@
     <string name="settings_widget_mic_desc">在 + 旁显示麦克风，用语音添加项目</string>
     <string name="quick_add_open_list">打开列表</string>
     <string name="quick_add_pick_date">日期</string>
+    <string name="quick_add_pick_date_time">日期和时间</string>
     <string name="quick_add_listening">正在聆听…</string>
     <string name="cd_voice_input">语音添加</string>
     <string name="cd_close">关闭</string>
@@ -239,4 +240,9 @@
     <string name="dialog_sign_out_server_message">使用此服务器的小部件将保持为空，直到在其设置中选择其他服务器。</string>
     <string name="action_sign_out">退出</string>
     <string name="widget_server_removed">服务器已移除。请在小部件设置中选择服务器。</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">所有列表均已隐藏。\n请在“设置 > 列表图标”中勾选要显示的列表。</string>
+    <string name="settings_list_visibility_hint">取消勾选可在应用中隐藏该列表。</string>
+    <string name="cd_show_list_in_app">在应用中显示此列表</string>
 </resources>

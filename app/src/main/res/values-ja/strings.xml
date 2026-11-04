@@ -122,6 +122,7 @@
     <string name="settings_widget_mic_desc">＋の横にマイクを表示して音声でアイテムを追加</string>
     <string name="quick_add_open_list">リストを開く</string>
     <string name="quick_add_pick_date">日付</string>
+    <string name="quick_add_pick_date_time">日付と時刻</string>
     <string name="quick_add_listening">聞き取り中…</string>
     <string name="cd_voice_input">音声で追加</string>
     <string name="cd_close">閉じる</string>
@@ -241,4 +242,9 @@
     <string name="dialog_sign_out_server_message">このサーバーを使うウィジェットは、設定で別のサーバーを選ぶまで空のままです。</string>
     <string name="action_sign_out">サインアウト</string>
     <string name="widget_server_removed">サーバーが削除されました。ウィジェット設定でサーバーを選んでください。</string>
+
+    <!-- Lists shown in the app -->
+    <string name="home_all_lists_hidden">すべてのリストが非表示です。\n設定 > リストアイコン でリストにチェックを入れてください。</string>
+    <string name="settings_list_visibility_hint">チェックを外すと、そのリストはアプリに表示されません。</string>
+    <string name="cd_show_list_in_app">このリストをアプリに表示</string>
 </resources>

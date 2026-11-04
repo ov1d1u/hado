@@ -19,6 +19,7 @@ object AppPreferencesManager {
     private const val KEY_ADD_ITEM_POSITION = "add_item_position"
     private const val KEY_CHECKBOX_ONLY = "app_checkbox_only"
     private const val KEY_HIDE_COMPLETED = "app_hide_completed"
+    private const val KEY_HIDDEN_LISTS = "app_hidden_lists"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -61,6 +62,25 @@ object AppPreferencesManager {
     fun saveHideCompleted(context: Context, enabled: Boolean) {
         prefs(context).edit()
             .putBoolean(KEY_HIDE_COMPLETED, enabled)
+            .apply()
+    }
+
+    // --- Lists hidden from the app ---
+    // Scoped per server, since entity ids of two servers can collide. Storing the hidden
+    // ids (rather than the shown ones) keeps new lists visible and lets every list be hidden.
+
+    /** Entity ids the app does not show; everything else is shown. */
+    fun loadHiddenLists(context: Context, accountId: String?): Set<String> {
+        // The returned set must not be modified, so hand back a copy.
+        return prefs(context)
+            .getStringSet(TokenManager.scopedKey(accountId, KEY_HIDDEN_LISTS), null)
+            ?.toSet()
+            .orEmpty()
+    }
+
+    fun saveHiddenLists(context: Context, accountId: String?, entityIds: Set<String>) {
+        prefs(context).edit()
+            .putStringSet(TokenManager.scopedKey(accountId, KEY_HIDDEN_LISTS), entityIds)
             .apply()
     }
 }
