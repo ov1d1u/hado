@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Choose which to-do lists appear in the app: untick a list in Settings > List Icons (per server; the widget keeps its own list selection)
+- Gemini and other assistants can add tasks to your lists on Android 16 and newer: ask to add a task, optionally naming the list, due date and time
 
 ### Changed
 - In the app, add items with the floating + button instead of the inline "List item" field; it opens the same quick add card the widget uses

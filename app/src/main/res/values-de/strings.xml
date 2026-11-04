@@ -248,4 +248,6 @@
     <string name="home_all_lists_hidden">Alle Listen sind ausgeblendet.\nHake eine Liste unter Einstellungen > Listensymbole an.</string>
     <string name="settings_list_visibility_hint">Entferne das Häkchen, um eine Liste in der App auszublenden.</string>
     <string name="cd_show_list_in_app">Diese Liste in der App anzeigen</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">Aufgaben und Erinnerungen zu den To-do-Listen in HAdo hinzufügen.</string>
 </resources>

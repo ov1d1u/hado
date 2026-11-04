@@ -15,8 +15,6 @@ import com.baer.hado.data.repository.AuthRepository
 import com.baer.hado.data.repository.TodoRepository
 import com.baer.hado.notifications.OverdueNotificationScheduler
 import com.baer.hado.ui.navigation.Routes
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -67,36 +65,14 @@ class HomeViewModel @Inject constructor(
         private const val PENDING_ADD_RECHECKS = 5
         private const val PENDING_ADD_RECHECK_DELAY_MS = 1_200L
         private const val BACKGROUND_LIST_CACHE_TTL_MS = 15_000L
-        private const val LIST_ORDER_PREFS = "hado_app_prefs"
-        private const val KEY_LIST_ORDER = "list_order_json"
     }
 
     /** Prefs for list order and visibility belong to the server shown in the app. */
     private val scopeAccountId: String?
         get() = if (tokenManager.isDemoMode) null else tokenManager.activeAccountId
 
-    private val listOrderKey: String
-        get() = TokenManager.scopedKey(scopeAccountId, KEY_LIST_ORDER)
-
-    private fun loadSavedOrder(): List<String> {
-        val json = appContext.getSharedPreferences(LIST_ORDER_PREFS, Context.MODE_PRIVATE)
-            .getString(listOrderKey, null) ?: return emptyList()
-        return try {
-            Gson().fromJson(json, object : TypeToken<List<String>>() {}.type)
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun saveOrder(order: List<String>) {
-        appContext.getSharedPreferences(LIST_ORDER_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(listOrderKey, Gson().toJson(order))
-            .apply()
-    }
-
     private fun applyOrder(lists: List<HaState>): List<HaState> {
-        val saved = loadSavedOrder()
+        val saved = AppPreferencesManager.loadListOrder(appContext, scopeAccountId)
         if (saved.isEmpty()) return lists
         val orderMap = saved.withIndex().associate { (i, id) -> id to i }
         return lists.sortedBy { orderMap[it.entityId] ?: Int.MAX_VALUE }
@@ -110,7 +86,8 @@ class HomeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(todoLists = current)
         // Only the shown lists can be dragged; keep the hidden ones in the saved order.
         val shownOrder = current.map { it.entityId }
-        saveOrder(shownOrder + loadSavedOrder().filterNot { it in shownOrder })
+        val saved = AppPreferencesManager.loadListOrder(appContext, scopeAccountId)
+        AppPreferencesManager.saveListOrder(appContext, scopeAccountId, shownOrder + saved.filterNot { it in shownOrder })
     }
 
     private fun applyVisibility(lists: List<HaState>): List<HaState> {

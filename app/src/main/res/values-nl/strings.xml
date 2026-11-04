@@ -246,4 +246,6 @@
     <string name="home_all_lists_hidden">Alle lijsten zijn verborgen.\nVink een lijst aan bij Instellingen > Lijstpictogrammen.</string>
     <string name="settings_list_visibility_hint">Vink een lijst uit om deze in de app te verbergen.</string>
     <string name="cd_show_list_in_app">Deze lijst in de app tonen</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">Voegt taken en herinneringen toe aan de to-do-lijsten in HAdo.</string>
 </resources>

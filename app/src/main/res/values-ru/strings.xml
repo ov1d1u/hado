@@ -250,4 +250,6 @@
     <string name="home_all_lists_hidden">Все списки скрыты.\nОтметьте список в «Настройки > Значки списков».</string>
     <string name="settings_list_visibility_hint">Снимите отметку, чтобы скрыть список в приложении.</string>
     <string name="cd_show_list_in_app">Показывать этот список в приложении</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">Добавляет задачи и напоминания в списки задач HAdo.</string>
 </resources>

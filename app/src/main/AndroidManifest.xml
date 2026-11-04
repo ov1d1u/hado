@@ -100,6 +100,26 @@
             android:name=".notifications.OverdueNotificationActionReceiver"
             android:exported="false" />
 
+        <!-- AppFunctions: lets Gemini and other system agents add tasks to HAdo (Android 16+) -->
+        <service
+            android:name=".ai.HadoAppFunctionService"
+            android:permission="android.permission.BIND_APP_FUNCTION_SERVICE"
+            android:exported="true"
+            tools:targetApi="36">
+            <property
+                android:name="android.app.appfunctions.schema"
+                android:value="app_functions_schema.xsd" />
+            <property
+                android:name="android.app.appfunctions.v2"
+                android:value="hado_app_function_service.xml" />
+            <intent-filter>
+                <action android:name="android.app.appfunctions.AppFunctionService" />
+            </intent-filter>
+        </service>
+        <property
+            android:name="android.app.appfunctions.app_metadata"
+            android:resource="@xml/app_metadata" />
+
         <!-- WorkManager initializer (disabled default, using Hilt) -->
         <provider
             android:name="androidx.startup.InitializationProvider"

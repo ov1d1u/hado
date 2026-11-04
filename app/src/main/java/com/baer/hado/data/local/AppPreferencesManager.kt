@@ -1,6 +1,8 @@
 package com.baer.hado.data.local
 
 import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 /**
  * Controls whether new items are added to the top (prepend) or bottom (append) of a list.
@@ -20,6 +22,7 @@ object AppPreferencesManager {
     private const val KEY_CHECKBOX_ONLY = "app_checkbox_only"
     private const val KEY_HIDE_COMPLETED = "app_hide_completed"
     private const val KEY_HIDDEN_LISTS = "app_hidden_lists"
+    private const val KEY_LIST_ORDER = "list_order_json"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -81,6 +84,25 @@ object AppPreferencesManager {
     fun saveHiddenLists(context: Context, accountId: String?, entityIds: Set<String>) {
         prefs(context).edit()
             .putStringSet(TokenManager.scopedKey(accountId, KEY_HIDDEN_LISTS), entityIds)
+            .apply()
+    }
+
+    // --- List order ---
+
+    /** Entity ids in the order the user arranged them; lists not in it keep the server order. */
+    fun loadListOrder(context: Context, accountId: String?): List<String> {
+        val json = prefs(context).getString(TokenManager.scopedKey(accountId, KEY_LIST_ORDER), null)
+            ?: return emptyList()
+        return try {
+            Gson().fromJson(json, object : TypeToken<List<String>>() {}.type)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveListOrder(context: Context, accountId: String?, order: List<String>) {
+        prefs(context).edit()
+            .putString(TokenManager.scopedKey(accountId, KEY_LIST_ORDER), Gson().toJson(order))
             .apply()
     }
 }

@@ -248,4 +248,6 @@
     <string name="home_all_lists_hidden">Toutes les listes sont masquées.\nCochez une liste dans Paramètres > Icônes des listes.</string>
     <string name="settings_list_visibility_hint">Décochez une liste pour la masquer dans l’app.</string>
     <string name="cd_show_list_in_app">Afficher cette liste dans l’app</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">Ajoute des tâches et des rappels aux listes de tâches de HAdo.</string>
 </resources>

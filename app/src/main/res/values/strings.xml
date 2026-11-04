@@ -251,4 +251,6 @@
     <string name="home_all_lists_hidden">All lists are hidden.\nTick a list under Settings > List Icons to show it.</string>
     <string name="settings_list_visibility_hint">Uncheck a list to hide it from the app.</string>
     <string name="cd_show_list_in_app">Show this list in the app</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">Add tasks and reminders to HAdo to-do lists.</string>
 </resources>

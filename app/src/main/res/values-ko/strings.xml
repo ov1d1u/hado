@@ -247,4 +247,6 @@
     <string name="home_all_lists_hidden">모든 목록이 숨겨져 있습니다.\n설정 > 목록 아이콘에서 목록을 선택하세요.</string>
     <string name="settings_list_visibility_hint">체크를 해제하면 해당 목록이 앱에서 숨겨집니다.</string>
     <string name="cd_show_list_in_app">이 목록을 앱에 표시</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">HAdo 할 일 목록에 작업과 알림을 추가합니다.</string>
 </resources>

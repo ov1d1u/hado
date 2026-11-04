@@ -248,4 +248,6 @@
     <string name="home_all_lists_hidden">Todas as listas estão ocultas.\nMarque uma lista em Configurações > Ícones das listas.</string>
     <string name="settings_list_visibility_hint">Desmarque uma lista para ocultá-la no app.</string>
     <string name="cd_show_list_in_app">Mostrar esta lista no app</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">Adiciona tarefas e lembretes às listas de tarefas do HAdo.</string>
 </resources>

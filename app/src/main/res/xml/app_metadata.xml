@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
+    appfn:description="HAdo manages the user's to-do lists, which live in Home Assistant or on this device. Operational patterns: use createTask to add a task or reminder to one of the user's lists, optionally naming the list and giving a due date and due time; use listTodoLists to find out which lists exist. Constraints: only lists the user shows in HAdo can be used, and a due time needs a due date."
+    appfn:displayDescription="@string/appfunctions_display_description" />

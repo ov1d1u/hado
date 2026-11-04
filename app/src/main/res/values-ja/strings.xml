@@ -247,4 +247,6 @@
     <string name="home_all_lists_hidden">すべてのリストが非表示です。\n設定 > リストアイコン でリストにチェックを入れてください。</string>
     <string name="settings_list_visibility_hint">チェックを外すと、そのリストはアプリに表示されません。</string>
     <string name="cd_show_list_in_app">このリストをアプリに表示</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">HAdo の To-Do リストにタスクやリマインダーを追加します。</string>
 </resources>

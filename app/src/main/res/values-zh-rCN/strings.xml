@@ -245,4 +245,6 @@
     <string name="home_all_lists_hidden">所有列表均已隐藏。\n请在“设置 > 列表图标”中勾选要显示的列表。</string>
     <string name="settings_list_visibility_hint">取消勾选可在应用中隐藏该列表。</string>
     <string name="cd_show_list_in_app">在应用中显示此列表</string>
+    <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
+    <string name="appfunctions_display_description">在 HAdo 的待办列表中添加任务和提醒。</string>
 </resources>
