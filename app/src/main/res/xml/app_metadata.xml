@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
-    appfn:instructions="HAdo is a to-do and reminder app whose lists live in Home Assistant or on this device. Operational patterns: use createTask to add a task or reminder to the user's default list, giving a due date and due time when the user mentions one; use addTask instead when the user names one of their lists; use listTodoLists to find out which lists exist. Constraints: only lists the user shows in HAdo can be used, and a due time needs a due date."
+    appfn:instructions="HA Tasks is a to-do and reminder app whose lists live in Home Assistant or on this device. Operational patterns: use createTask to add a task or reminder to the user's default list, giving a due date and due time when the user mentions one; use addTask instead when the user names one of their lists; use listTodoLists to find out which lists exist. Constraints: only lists the user shows in HA Tasks can be used, and a due time needs a due date."
     appfn:displayDescription="@string/appfunctions_display_description" />

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -328,6 +329,7 @@ private fun QuickAddCard(
                 .padding(8.dp)
                 .clickable(interactionSource = noRipple, indication = null, onClick = {}),
             shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
             tonalElevation = 6.dp,
             shadowElevation = 8.dp
         ) {
@@ -457,9 +459,17 @@ private fun QuickAddCard(
                 TextButton(onClick = { showDatePicker = false }) {
                     Text(stringResource(android.R.string.cancel))
                 }
-            }
+            },
+            colors = DatePickerDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+            )
         ) {
-            DatePicker(state = pickerState)
+            DatePicker(
+                state = pickerState,
+                colors = DatePickerDefaults.colors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            )
         }
     }
 
@@ -473,6 +483,7 @@ private fun QuickAddCard(
             onDismissRequest = { showTimePicker = false },
             title = { Text(stringResource(R.string.dialog_set_time)) },
             text = { TimePicker(state = timePickerState) },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             confirmButton = {
                 TextButton(onClick = {
                     val date = due?.substringBefore("T")

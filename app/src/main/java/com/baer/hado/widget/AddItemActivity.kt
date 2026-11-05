@@ -1552,6 +1552,7 @@ internal fun ItemDetailDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         title = {
             OutlinedTextField(
                 value = summary,
@@ -1724,9 +1725,17 @@ internal fun ItemDetailDialog(
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) { Text(stringResource(R.string.action_cancel)) }
-            }
+            },
+            colors = DatePickerDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+            )
         ) {
-            DatePicker(state = datePickerState)
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            )
         }
     }
 
@@ -1741,6 +1750,7 @@ internal fun ItemDetailDialog(
             onDismissRequest = { showTimePicker = false },
             title = { Text(stringResource(R.string.dialog_set_time)) },
             text = { TimePicker(state = timePickerState) },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             confirmButton = {
                 TextButton(onClick = {
                     // Combine selected date with time

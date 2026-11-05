@@ -209,12 +209,12 @@ abstract class BaseHadoAppFunctionService : AppFunctionService(), HadoTaskSchema
     private fun requireSignedIn() {
         if (!tokenManager.isLoggedIn) {
             throw AppFunctionDisabledException(
-                "HAdo is not signed in to a Home Assistant server. Open HAdo and sign in first."
+                "HA Tasks is not signed in to a Home Assistant server. Open HA Tasks and sign in first."
             )
         }
     }
 
-    /** The lists the user shows in HAdo, in the order they appear there. */
+    /** The lists the user shows in HA Tasks, in the order they appear there. */
     private suspend fun visibleLists(): List<HaState> {
         val accountId = if (tokenManager.isDemoMode) null else tokenManager.activeAccountId
         val lists = todoRepository.getTodoLists().getOrElse { e ->
@@ -233,7 +233,7 @@ abstract class BaseHadoAppFunctionService : AppFunctionService(), HadoTaskSchema
     private fun findList(lists: List<HaState>, requested: String?): HaState {
         if (lists.isEmpty()) {
             throw AppFunctionInvalidArgumentException(
-                "HAdo shows no to-do list. Show a list in HAdo's settings first."
+                "HA Tasks shows no to-do list. Show a list in HA Tasks's settings first."
             )
         }
         val wanted = requested?.trim()

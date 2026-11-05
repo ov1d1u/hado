@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HAdo</string>
-    <string name="widget_name">HAdo To-Do</string>
+    <string name="app_name">HA Tasks</string>
+    <string name="widget_name">HA Tasks To-Do</string>
     <string name="widget_description">Home Assistant To-Do list widget</string>
     <color name="ic_launcher_background">#03A9F4</color>
 
@@ -121,7 +121,7 @@
     <string name="notification_cadence_daily_until_done">Daily until done</string>
     <string name="notification_channel_name">Due item reminders</string>
     <string name="notification_channel_description">Notifications for due and overdue to-do items.</string>
-    <string name="notification_summary_title">HAdo reminders</string>
+    <string name="notification_summary_title">HA Tasks reminders</string>
     <string name="notification_summary_text">%1$d due or overdue items</string>
     <string name="notification_more_items">+%1$d more</string>
     <string name="label_tap_to_change">Tap to change</string>
@@ -143,7 +143,7 @@
     <string name="settings_auto_focus_on_open_desc">Automatically focus the new item field when opening a list</string>
     <string name="section_appearance">Appearance</string>
     <string name="settings_show_title">Show widget title</string>
-    <string name="settings_show_title_desc">Display the HAdo icon and title bar</string>
+    <string name="settings_show_title_desc">Display the HA Tasks icon and title bar</string>
     <string name="settings_hide_single_list_name">Hide list name</string>
     <string name="settings_hide_single_list_name_desc">Hide the list header when the widget shows only one list</string>
     <string name="settings_hide_single_list_name_disabled">Only when the widget shows one list</string>
@@ -252,5 +252,5 @@
     <string name="settings_list_visibility_hint">Uncheck a list to hide it from the app.</string>
     <string name="cd_show_list_in_app">Show this list in the app</string>
     <!-- AppFunctions: shown to the user for HAdo's assistant actions -->
-    <string name="appfunctions_display_description">Add tasks and reminders to HAdo to-do lists.</string>
+    <string name="appfunctions_display_description">Add tasks and reminders to HA Tasks to-do lists.</string>
 </resources>
