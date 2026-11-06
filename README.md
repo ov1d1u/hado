@@ -1,10 +1,6 @@
-# <img src="ASSETS/logo.png" alt="HAdo Logo" width="48" align="top"> HAdo
+# <img src="ASSETS/logo.png" alt="HA Tasks Logo" width="48" align="top"> HA Tasks
 
 Privacy-first Android home screen widget for your Home Assistant to-do lists.
-
-<a href="https://play.google.com/store/apps/details?id=com.baer.hado">
-  <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80">
-</a>
 
 ## Screenshots
 
@@ -63,7 +59,7 @@ The APK will be in `app/build/outputs/apk/debug/`.
 
 ## Privacy
 
-HAdo does not collect, transmit, or share any data with third parties. All communication happens directly between your device and your Home Assistant instance over HTTPS.
+HA Tasks does not collect, transmit, or share any data with third parties. All communication happens directly between your device and your Home Assistant instance over HTTPS.
 
 See [PRIVACY.md](PRIVACY.md) for the full privacy policy.
 
@@ -77,7 +73,7 @@ Issues and feature requests are welcome. Please open an issue before submitting 
 
 ## 💜 Support
 
-If you like HAdo, consider supporting this and future work, which heavily relies on coffee:
+If you like HA Tasks, consider supporting this and future work, which heavily relies on coffee:
 
 <div align="center">
 <a href="https://www.buymeacoffee.com/itbaer" target="_blank"><img src="https://github.com/user-attachments/assets/64107f03-ba5b-473e-b8ad-f3696fe06002" alt="Buy Me A Coffee" style="height: 60px; max-width: 217px;"></a>

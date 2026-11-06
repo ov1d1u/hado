@@ -1,30 +1,30 @@
 # Privacy Policy
 
-**HAdo — Home Assistant To-Do Widget**
+**HA Tasks — Home Assistant To-Do Widget**
 **Effective Date:** April 9, 2026
 **Developer:** IT-BAER (Bruno Miglar)
 **Contact:** admin@it-baer.net
 
 ## Overview
 
-HAdo is a privacy-first Android widget app for managing Home Assistant To-Do lists. The app communicates directly with your personal Home Assistant instance and does not collect, transmit, or share any data with third parties.
+HA Tasks is a privacy-first Android widget app for managing Home Assistant To-Do lists. The app communicates directly with your personal Home Assistant instance and does not collect, transmit, or share any data with third parties.
 
 ## Data Collection
 
-### What data does HAdo access?
+### What data does HA Tasks access?
 
 - **Home Assistant server URL:** The URL of your personal Home Assistant instance, entered by you during setup.
 - **Authentication tokens:** OAuth2 access and refresh tokens issued by your Home Assistant instance, used to authenticate API requests.
 - **To-Do list data:** Your to-do list names, items, descriptions, due dates, and completion status — fetched directly from your Home Assistant instance.
 
-### What data does HAdo store on your device?
+### What data does HA Tasks store on your device?
 
 - **Server URL and authentication tokens:** Stored securely in Android's EncryptedSharedPreferences.
 - **Widget configuration:** Your widget layout preferences (selected lists, font size, background opacity, etc.) stored in SharedPreferences.
 - **List icon overrides:** Custom emoji or image icons you assign to lists, stored locally in the app's private storage.
 - **Cached list data:** A local cache of your to-do items for fast widget rendering, stored in Glance widget preferences.
 
-### What data does HAdo NOT collect?
+### What data does HA Tasks NOT collect?
 
 - No personal information (name, email, phone number)
 - No device identifiers (IMEI, advertising ID, hardware serial)
@@ -35,15 +35,15 @@ HAdo is a privacy-first Android widget app for managing Home Assistant To-Do lis
 
 ## Data Transmission
 
-All communication between HAdo and your Home Assistant instance occurs over **HTTPS** (or the protocol you configure). Data is transmitted exclusively between your Android device and your Home Assistant server. No data is sent to IT-BAER, Google, or any third party.
+All communication between HA Tasks and your Home Assistant instance occurs over **HTTPS** (or the protocol you configure). Data is transmitted exclusively between your Android device and your Home Assistant server. No data is sent to IT-BAER, Google, or any third party.
 
 ## Third-Party Services
 
-HAdo does **not** integrate any third-party SDKs, analytics platforms, advertising networks, or cloud services. The app has zero external dependencies beyond your own Home Assistant instance.
+HA Tasks does **not** integrate any third-party SDKs, analytics platforms, advertising networks, or cloud services. The app has zero external dependencies beyond your own Home Assistant instance.
 
 ## Data Sharing
 
-HAdo does **not** share, sell, or transfer any user data to third parties under any circumstances.
+HA Tasks does **not** share, sell, or transfer any user data to third parties under any circumstances.
 
 ## Data Retention and Deletion
 
@@ -54,7 +54,7 @@ HAdo does **not** share, sell, or transfer any user data to third parties under 
 
 ## Permissions
 
-HAdo requests only one Android permission:
+HA Tasks requests only one Android permission:
 
 | Permission | Purpose |
 |---|---|
@@ -62,7 +62,7 @@ HAdo requests only one Android permission:
 
 ## Children's Privacy
 
-HAdo is not directed at children under the age of 13 and does not knowingly collect any data from children.
+HA Tasks is not directed at children under the age of 13 and does not knowingly collect any data from children.
 
 ## Changes to This Policy
 

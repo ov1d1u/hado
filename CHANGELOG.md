@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to HAdo will be documented in this file.
+All notable changes to HA Tasks will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Choose which to-do lists appear in the app: untick a list in Settings > List Icons (per server; the widget keeps its own list selection)
 - Gemini and other assistants can add tasks to your lists on Android 16 and newer: ask to add a task, optionally naming the list, due date and time
-- HAdo now implements the standard `tasks.createTask` AppFunctions schema, so assistants can recognise it as a task and reminder tool
+- HA Tasks now implements the standard `tasks.createTask` AppFunctions schema, so assistants can recognise it as a task and reminder tool
 
 ### Changed
 - In the app, add items with the floating + button instead of the inline "List item" field; it opens the same quick add card the widget uses
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add items by voice: tap the mic in the quick add card; the recognized text is filled in for you to check
 - Optional mic button on the widget: Widget settings > Voice button
 - Hide the list name on a widget that shows only one list: Widget settings > Hide list name
-- Deep link `hado://list/<entity_id>` (e.g. `hado://list/todo.shopping`) opens HAdo on that list, handy for Home Assistant notification buttons (thanks @chelming)
+- Deep link `hado://list/<entity_id>` (e.g. `hado://list/todo.shopping`) opens HA Tasks on that list, handy for Home Assistant notification buttons (thanks @chelming)
 
 ### Changed
 - Tapping a list name on the widget still opens the full list; the new + opens quick add
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Sign in to several Home Assistant servers, for example home and a holiday flat: Settings > Servers > Add server
 - Each widget shows the lists of one server; pick the server in the widget settings
-- Give each widget its own title instead of "HAdo"
+- Give each widget its own title instead of "HA Tasks"
 - Switch servers from the top bar of the app when more than one server is signed in
 - Rename a server, or sign out of one server and keep the others
 - A widget whose server was signed out says so and points to the widget settings
@@ -108,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Optional due and overdue item notifications with per-list filtering, configurable lead time, repeat cadence, and quick actions for Later and Done
-- In-app language picker with Android per-app locale support for all supported HAdo languages
+- In-app language picker with Android per-app locale support for all supported HA Tasks languages
 - Completed translation coverage for the latest notification, language, and MDI icon strings across every supported locale
 
 ### Changed
