@@ -61,6 +61,7 @@
 
     <!-- Content descriptions -->
     <string name="cd_new_list">Новый список</string>
+    <string name="cd_more_options">Другие параметры</string>
     <string name="cd_refresh">Обновить</string>
     <string name="cd_settings">Настройки</string>
     <string name="cd_add_item">Добавить элемент</string>

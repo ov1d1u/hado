@@ -61,6 +61,7 @@
 
     <!-- Content descriptions -->
     <string name="cd_new_list">Nieuwe lijst</string>
+    <string name="cd_more_options">Meer opties</string>
     <string name="cd_refresh">Vernieuwen</string>
     <string name="cd_settings">Instellingen</string>
     <string name="cd_add_item">Item toevoegen</string>

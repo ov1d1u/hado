@@ -52,6 +52,8 @@ import com.baer.hado.R
 import com.baer.hado.data.local.AddItemPosition
 import com.baer.hado.data.local.AppPreferencesManager
 import com.baer.hado.data.local.LocalTodoStore
+import com.baer.hado.data.local.PendingSyncStore
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.SimpleState
 import com.baer.hado.notifications.OverdueNotificationSettings
@@ -464,6 +466,8 @@ fun AppSettingsScreen(
                     supporting = stringResource(R.string.settings_logout_supporting),
                     onClick = {
                         tokenManager.clearAll()
+                        TodoCacheManager.clearAll(context)
+                        PendingSyncStore.clearAll(context)
                         OverdueNotificationScheduler.cancelAll(context)
                         onLogout()
                     },
@@ -587,6 +591,8 @@ fun AppSettingsScreen(
             },
             onSignOut = {
                 editServerId = null
+                TodoCacheManager.clearAccount(context, id)
+                PendingSyncStore.clearAccount(context, id)
                 if (tokenManager.removeAccount(id)) {
                     OverdueNotificationScheduler.cancelAll(context)
                     onLogout()
@@ -1308,26 +1314,40 @@ private fun openExternalUrl(context: android.content.Context, url: String) {
 
 private suspend fun fetchLists(context: android.content.Context): List<Triple<String, String, String?>> {
     return withContext(Dispatchers.IO) {
-        try {
-            val tokenManager = TokenManager(context)
-            if (tokenManager.isDemoMode) {
-                val localStore = LocalTodoStore(context)
-                return@withContext localStore.getLists().map { list ->
+        val tokenManager = TokenManager(context)
+        if (tokenManager.isDemoMode) {
+            val localStore = LocalTodoStore(context)
+            return@withContext localStore.getLists().map { list ->
+                Triple(
+                    list.entityId,
+                    list.attributes.friendlyName ?: list.entityId,
+                    null as String?
+                )
+            }
+        }
+
+        val accountId = tokenManager.activeAccountId
+        fun cachedFallback(): List<Triple<String, String, String?>> {
+            return TodoCacheManager.loadLists(context, accountId)
+                ?.map { list ->
                     Triple(
                         list.entityId,
                         list.attributes.friendlyName ?: list.entityId,
                         null as String?
                     )
                 }
-            }
+                ?.sortedBy { it.second }
+                .orEmpty()
+        }
 
+        try {
             val httpClient = WidgetHttpClient(context)
-            if (!httpClient.isLoggedIn) return@withContext emptyList()
+            if (!httpClient.isLoggedIn) return@withContext cachedFallback()
 
-            val response = httpClient.get("api/states") ?: return@withContext emptyList()
+            val response = httpClient.get("api/states") ?: return@withContext cachedFallback()
             val json = response.use { resp ->
-                if (!resp.isSuccessful) return@withContext emptyList()
-                resp.body?.string() ?: return@withContext emptyList()
+                if (!resp.isSuccessful) return@withContext cachedFallback()
+                resp.body?.string() ?: return@withContext cachedFallback()
             }
 
             val type = object : TypeToken<List<SimpleState>>() {}.type
@@ -1343,7 +1363,7 @@ private suspend fun fetchLists(context: android.content.Context): List<Triple<St
                 }
                 .sortedBy { it.second }
         } catch (_: Exception) {
-            emptyList()
+            cachedFallback()
         }
     }
 }

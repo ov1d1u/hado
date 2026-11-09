@@ -7,18 +7,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.baer.hado.data.local.AddItemPosition
 import com.baer.hado.data.local.AppPreferencesManager
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.HaState
 import com.baer.hado.data.model.TodoItem
-import com.baer.hado.data.model.TodoItemStatus
 import com.baer.hado.data.repository.AuthRepository
 import com.baer.hado.data.repository.TodoRepository
+import com.baer.hado.data.sync.TodoSyncManager
 import com.baer.hado.notifications.OverdueNotificationScheduler
 import com.baer.hado.ui.navigation.Routes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,10 +60,6 @@ class HomeViewModel @Inject constructor(
 
     companion object {
         private const val SELECTED_LIST_CACHE_TTL_MS = 5_000L
-        /** How long a saved item stays visible while no fetch confirms it. */
-        private const val PENDING_ADD_TTL_MS = 20_000L
-        private const val PENDING_ADD_RECHECKS = 5
-        private const val PENDING_ADD_RECHECK_DELAY_MS = 1_200L
         private const val BACKGROUND_LIST_CACHE_TTL_MS = 15_000L
     }
 
@@ -109,20 +105,36 @@ class HomeViewModel @Inject constructor(
      * Stores the fetched lists, shows [shown] and keeps the selection on a shown list,
      * falling back to [preferredId] and then to the first shown list.
      */
-    private fun publishLists(all: List<HaState>, shown: List<HaState>, preferredId: String? = null) {
+    private fun publishLists(
+        all: List<HaState>,
+        shown: List<HaState>,
+        preferredId: String? = null,
+        fetchSelected: Boolean = true
+    ) {
         allTodoLists = all
         val selectedId = (preferredId ?: _uiState.value.selectedListId)
             ?.takeIf { id -> shown.any { it.entityId == id } }
             ?: shown.firstOrNull()?.entityId
 
+        // Populate itemsByList from local cache for any list not yet in memory
+        val currentItems = _uiState.value.itemsByList.toMutableMap()
+        for (list in shown) {
+            todoRepository.getCachedTodoItems(list.entityId)?.let { cached ->
+                currentItems[list.entityId] = cached
+            }
+        }
+
         _uiState.value = _uiState.value.copy(
             todoLists = shown,
             selectedListId = selectedId,
+            itemsByList = currentItems,
             allListsHidden = all.isNotEmpty() && shown.isEmpty(),
             isLoadingLists = false
         )
 
-        selectedId?.let { loadItems(it) }
+        if (fetchSelected) {
+            selectedId?.let { loadItems(it) }
+        }
     }
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -130,16 +142,6 @@ class HomeViewModel @Inject constructor(
 
     /** Every list of the active server, before order and the visibility filter. */
     private var allTodoLists: List<HaState> = emptyList()
-
-    /** An item saved in the quick add card that no fetch has confirmed yet. */
-    private data class PendingAdd(
-        val item: TodoItem,
-        val atTop: Boolean,
-        val addedAt: Long = System.currentTimeMillis()
-    )
-
-    private val pendingAdds = mutableMapOf<String, MutableList<PendingAdd>>()
-    private var reconcileJob: Job? = null
 
     private var loadItemsJob: Job? = null
     private var loadingEntityId: String? = null
@@ -151,7 +153,50 @@ class HomeViewModel @Inject constructor(
     init {
         _uiState.value = _uiState.value.copy(isLocalMode = tokenManager.isDemoMode)
         refreshServers()
+        loadInitialCache()
+        observeCacheUpdates()
         loadTodoLists()
+    }
+
+    private fun loadInitialCache() {
+        val cachedLists = todoRepository.getCachedTodoLists()
+        if (cachedLists.isEmpty()) return
+        val ordered = applyOrder(cachedLists)
+        val requested = requestedListId?.takeIf { id -> ordered.any { it.entityId == id } }
+        val visible = applyVisibility(ordered)
+        val shown = if (requested != null && visible.none { it.entityId == requested }) {
+            val visibleIds = visible.mapTo(mutableSetOf()) { it.entityId }
+            ordered.filter { it.entityId == requested || it.entityId in visibleIds }
+        } else {
+            visible
+        }
+        publishLists(all = ordered, shown = shown, preferredId = requested, fetchSelected = false)
+    }
+
+    private fun observeCacheUpdates() {
+        viewModelScope.launch {
+            TodoCacheManager.updates.collect { event ->
+                if (event.accountId != scopeAccountId) return@collect
+                val entityId = event.entityId
+                if (entityId != null) {
+                    val effective = todoRepository.getCachedTodoItems(entityId) ?: return@collect
+                    _uiState.update { state ->
+                        if (state.itemsByList[entityId] == effective) {
+                            state
+                        } else {
+                            state.copy(itemsByList = state.itemsByList + (entityId to effective))
+                        }
+                    }
+                } else {
+                    val cachedLists = todoRepository.getCachedTodoLists()
+                    if (cachedLists.isNotEmpty()) {
+                        val ordered = applyOrder(cachedLists)
+                        val visible = applyVisibility(ordered)
+                        publishLists(all = ordered, shown = visible, fetchSelected = false)
+                    }
+                }
+            }
+        }
     }
 
     /** Settings can rename or remove servers while Home stays on the back stack. */
@@ -164,7 +209,8 @@ class HomeViewModel @Inject constructor(
 
     fun loadTodoLists() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoadingLists = true, error = null)
+            val hasCachedLists = _uiState.value.todoLists.isNotEmpty() || allTodoLists.isNotEmpty()
+            _uiState.value = _uiState.value.copy(isLoadingLists = !hasCachedLists, error = null)
             todoRepository.getTodoLists().fold(
                 onSuccess = { lists ->
                     val ordered = applyOrder(lists)
@@ -185,6 +231,10 @@ class HomeViewModel @Inject constructor(
                     if (e.message?.contains("401") == true) {
                         Log.w("HAdo", "401 on loadTodoLists — token refresh failed, redirecting to login")
                         handleUnauthorized(isLoadingLists = false)
+                    } else if (hasCachedLists) {
+                        // Keep showing cached lists offline without an error snackbar on startup
+                        _uiState.value = _uiState.value.copy(isLoadingLists = false)
+                        _uiState.value.selectedListId?.let { loadItems(it) }
                     } else {
                         _uiState.value = _uiState.value.copy(
                             isLoadingLists = false,
@@ -198,12 +248,26 @@ class HomeViewModel @Inject constructor(
 
     fun selectList(entityId: String) {
         if (_uiState.value.selectedListId == entityId) return
-        _uiState.value = _uiState.value.copy(selectedListId = entityId, error = null)
+        val cached = todoRepository.getCachedTodoItems(entityId)
+        _uiState.update { state ->
+            state.copy(
+                selectedListId = entityId,
+                itemsByList = if (cached != null) state.itemsByList + (entityId to cached) else state.itemsByList,
+                error = null
+            )
+        }
         loadItems(entityId)
     }
 
     fun loadItems(entityId: String? = _uiState.value.selectedListId, force: Boolean = false) {
         val id = entityId ?: return
+        // Immediately refresh from local cache in case an external activity wrote to it
+        todoRepository.getCachedTodoItems(id)?.let { cached ->
+            _uiState.update { state ->
+                if (state.itemsByList[id] == cached) state
+                else state.copy(itemsByList = state.itemsByList + (id to cached))
+            }
+        }
         if (!shouldLoadItems(id, force)) return
 
         val previousLoadingId = loadingEntityId
@@ -226,7 +290,7 @@ class HomeViewModel @Inject constructor(
                         if (loadToken != activeLoadToken) return@fold
                         _uiState.update { state ->
                             state.copy(
-                                itemsByList = state.itemsByList + (id to mergePendingAdds(id, items)),
+                                itemsByList = state.itemsByList + (id to items),
                                 lastLoadedAt = state.lastLoadedAt + (id to System.currentTimeMillis())
                             )
                         }
@@ -236,7 +300,7 @@ class HomeViewModel @Inject constructor(
                         if (e.message?.contains("401") == true) {
                             Log.w("HAdo", "401 on loadItems — token refresh failed, redirecting to login")
                             handleUnauthorized()
-                        } else {
+                        } else if (force && _uiState.value.itemsByList[id] == null) {
                             _uiState.update { state ->
                                 state.copy(error = e.message ?: "Failed to load items")
                             }
@@ -302,58 +366,16 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * Shows an item the quick add card just saved, before the write reaches the server, so the
-     * list never looks unchanged. The placeholder is merged into every load of that list until
-     * the server reports a matching item (or [PENDING_ADD_TTL_MS] passes).
-     * [due] is `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm:ss`.
+     * Reflects an item added in QuickAddActivity immediately into the ViewModel state
+     * and triggers a background sync.
      */
-    fun showPendingItem(entityId: String, summary: String, due: String?) {
-        val trimmed = summary.trim()
-        if (trimmed.isEmpty()) return
-
-        val pending = PendingAdd(
-            item = TodoItem(
-                uid = "pending_${System.nanoTime()}",
-                summary = trimmed,
-                status = TodoItemStatus.NEEDS_ACTION,
-                due = due
-            ),
-            atTop = AppPreferencesManager.loadAddItemPosition(appContext) == AddItemPosition.TOP
-        )
-        pendingAdds.getOrPut(entityId) { mutableListOf() } += pending
-
-        _uiState.update { state ->
-            state.copy(
-                itemsByList = state.itemsByList + (entityId to mergePendingAdds(entityId, state.itemsFor(entityId)))
-            )
-        }
-        // The write runs outside this screen, so poll briefly for the real item: it carries the
-        // uid that toggling and editing need, which the placeholder cannot provide.
-        reconcileJob?.cancel()
-        reconcileJob = viewModelScope.launch {
-            loadItems(entityId, force = true)
-            repeat(PENDING_ADD_RECHECKS) {
-                delay(PENDING_ADD_RECHECK_DELAY_MS)
-                if (pendingAdds[entityId].isNullOrEmpty()) return@launch
-                loadItems(entityId, force = true)
+    fun onQuickAddCompleted(entityId: String) {
+        todoRepository.getCachedTodoItems(entityId)?.let { cached ->
+            _uiState.update { state ->
+                state.copy(itemsByList = state.itemsByList + (entityId to cached))
             }
         }
-    }
-
-    /** Adds the not-yet-confirmed items of [entityId] to [loaded], dropping the ones it covers. */
-    private fun mergePendingAdds(entityId: String, loaded: List<TodoItem>): List<TodoItem> {
-        val pending = pendingAdds[entityId] ?: return loaded
-        val now = System.currentTimeMillis()
-        pending.removeAll { candidate ->
-            now - candidate.addedAt > PENDING_ADD_TTL_MS ||
-                loaded.any { it.summary == candidate.item.summary && !it.isCompleted }
-        }
-        if (pending.isEmpty()) {
-            pendingAdds.remove(entityId)
-            return loaded
-        }
-        val (top, bottom) = pending.partition { it.atTop }
-        return top.map { it.item } + loaded + bottom.map { it.item }
+        TodoSyncManager.triggerSync(appContext, scopeAccountId)
     }
 
     fun toggleItem(item: TodoItem) {

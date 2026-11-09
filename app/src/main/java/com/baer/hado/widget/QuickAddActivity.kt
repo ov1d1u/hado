@@ -3,8 +3,6 @@ package com.baer.hado.widget
 import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.os.Bundle
-import android.util.Log
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -72,21 +70,11 @@ import androidx.compose.ui.unit.dp
 import com.baer.hado.R
 import com.baer.hado.data.local.AddItemPosition
 import com.baer.hado.data.local.AppPreferencesManager
-import com.baer.hado.data.local.LocalTodoStore
 import com.baer.hado.data.local.TokenManager
-import com.baer.hado.data.model.TodoItem
-import com.baer.hado.data.model.TodoItemStatus
 import com.baer.hado.data.model.TodoListFeature
+import com.baer.hado.data.sync.TodoSyncManager
 import com.baer.hado.ui.theme.HadoTheme
-import com.google.gson.Gson
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -106,10 +94,6 @@ class QuickAddActivity : ComponentActivity() {
         const val EXTRA_ADDED_SUMMARY = "added_summary"
         const val EXTRA_ADDED_DUE = "added_due"
     }
-
-    // Outlives the activity so writes complete after finish(); the mutex keeps add order.
-    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val saveMutex = Mutex()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Light bar icons over the dim in both themes, and no nav scrim on top of the dim.
@@ -184,79 +168,16 @@ class QuickAddActivity : ComponentActivity() {
     ) {
         val appContext = applicationContext
         val position = AppPreferencesManager.loadAddItemPosition(appContext)
-        saveScope.launch {
-            saveMutex.withLock {
-                if (isLocalMode) {
-                    val item = LocalTodoStore(appContext).addItem(entityId, text, due = due, position = position)
-                    WidgetStateMutator.addItem(appContext, accountId, entityId, item, position, appWidgetId)
-                } else {
-                    addToHomeAssistant(entityId, text, due, accountId, appWidgetId, position)
-                }
-                if (appWidgetId != null) {
-                    TodoWidgetWorker.enqueueOneTime(appContext, appWidgetId)
-                } else {
-                    TodoWidgetWorker.enqueueOneTime(appContext)
-                }
-            }
-        }
-    }
-
-    private suspend fun addToHomeAssistant(
-        entityId: String,
-        text: String,
-        due: String?,
-        accountId: String?,
-        appWidgetId: Int?,
-        position: AddItemPosition
-    ) {
-        val appContext = applicationContext
-        val gson = Gson()
-        val httpClient = WidgetHttpClient(appContext, accountId)
-
-        // Optimistic: show the item on the widget right away, revert on failure.
-        val tempItem = TodoItem(
-            uid = "temp_${System.nanoTime()}",
+        TodoSyncManager.addItem(
+            context = appContext,
+            accountId = accountId,
+            entityId = entityId,
             summary = text,
-            status = TodoItemStatus.NEEDS_ACTION,
-            due = due
+            due = due,
+            position = position,
+            isLocalMode = isLocalMode,
+            preferredAppWidgetId = appWidgetId
         )
-        WidgetStateMutator.addItem(appContext, accountId, entityId, tempItem, position, appWidgetId)
-
-        val added = try {
-            val knownUids = fetchListItems(httpClient, gson, entityId)?.map { it.uid }?.toSet() ?: emptySet()
-            val body = buildMap {
-                put("entity_id", entityId)
-                put("item", text)
-                // HA takes a datetime only under due_datetime, and as "YYYY-MM-DD HH:mm:ss".
-                if (due != null) {
-                    if (due.contains("T")) put("due_datetime", due.replace("T", " "))
-                    else put("due_date", due)
-                }
-            }
-            val ok = httpClient.post("api/services/todo/add_item", gson.toJson(body))?.use { resp ->
-                if (!resp.isSuccessful) Log.e("HAdo", "Quick add failed: ${resp.code}")
-                resp.isSuccessful
-            } == true
-            if (ok) resolveAddedItem(httpClient, gson, entityId, knownUids, text) ?: AddedItem(tempItem, true) else null
-        } catch (e: Exception) {
-            Log.e("HAdo", "Quick add failed", e)
-            null
-        }
-
-        if (added == null) {
-            WidgetStateMutator.removeItem(appContext, accountId, entityId, tempItem.uid, appWidgetId)
-            withContext(Dispatchers.Main) {
-                Toast.makeText(appContext, R.string.error_add_failed, Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        if (added.item.uid != tempItem.uid) {
-            if (position == AddItemPosition.TOP && !added.alreadyFirstActive) {
-                httpClient.moveTodoItem(entityId, added.item.uid, null)
-            }
-            WidgetStateMutator.replaceItem(appContext, accountId, entityId, tempItem.uid, added.item, appWidgetId)
-        }
     }
 }
 

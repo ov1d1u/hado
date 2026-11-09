@@ -218,7 +218,9 @@ abstract class BaseHadoAppFunctionService : AppFunctionService(), HadoTaskSchema
     private suspend fun visibleLists(): List<HaState> {
         val accountId = if (tokenManager.isDemoMode) null else tokenManager.activeAccountId
         val lists = todoRepository.getTodoLists().getOrElse { e ->
-            throw AppFunctionAppUnknownException("Could not load the to-do lists: ${e.message}")
+            todoRepository.getCachedTodoLists().ifEmpty {
+                throw AppFunctionAppUnknownException("Could not load the to-do lists: ${e.message}")
+            }
         }
         val hidden = AppPreferencesManager.loadHiddenLists(applicationContext, accountId)
         val order = AppPreferencesManager.loadListOrder(applicationContext, accountId)

@@ -5,6 +5,8 @@ import android.net.Uri
 import com.baer.hado.data.api.HaAuthService
 import com.baer.hado.data.api.TokenRefreshInterceptor.Companion.AUTH_CLIENT_ID
 import com.baer.hado.data.api.TokenRefreshInterceptor.Companion.AUTH_REDIRECT_URI
+import com.baer.hado.data.local.PendingSyncStore
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.TokenResponse
 import com.baer.hado.notifications.OverdueNotificationScheduler
@@ -60,12 +62,17 @@ class AuthRepository @Inject constructor(
 
     fun logout() {
         tokenManager.clearAll()
+        TodoCacheManager.clearAll(context)
+        PendingSyncStore.clearAll(context)
         OverdueNotificationScheduler.cancelAll(context)
     }
 
     /** Signs out of the active server only. Returns true when no server is left. */
     fun removeActiveAccount(): Boolean {
-        val allGone = tokenManager.removeAccount(tokenManager.activeAccountId)
+        val removedId = tokenManager.activeAccountId
+        val allGone = tokenManager.removeAccount(removedId)
+        TodoCacheManager.clearAccount(context, removedId)
+        PendingSyncStore.clearAccount(context, removedId)
         if (allGone) {
             OverdueNotificationScheduler.cancelAll(context)
         } else {

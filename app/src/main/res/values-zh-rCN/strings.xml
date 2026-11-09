@@ -61,6 +61,7 @@
 
     <!-- Content descriptions -->
     <string name="cd_new_list">新建列表</string>
+    <string name="cd_more_options">更多选项</string>
     <string name="cd_refresh">刷新</string>
     <string name="cd_settings">设置</string>
     <string name="cd_add_item">添加项目</string>

@@ -14,9 +14,13 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.baer.hado.data.local.LocalTodoStore
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
+import com.baer.hado.data.model.HaAttributes
+import com.baer.hado.data.model.HaState
 import com.baer.hado.data.model.SimpleState
 import com.baer.hado.data.model.TodoItem
+import com.baer.hado.data.sync.TodoSyncManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.assisted.Assisted
@@ -64,8 +68,12 @@ class TodoWidgetWorker @AssistedInject constructor(
                 // The widget's server was removed: show no lists instead of another server's data.
                 accountId == null -> emptyList()
                 accountId in listsByAccount -> listsByAccount[accountId]
-                else -> fetchHaLists(context, WidgetHttpClient(context, accountId))
-                    .also { listsByAccount[accountId] = it }
+                else -> {
+                    TodoSyncManager.drainQueue(context, accountId)
+                    (fetchHaLists(context, WidgetHttpClient(context, accountId))
+                        ?: loadCachedWidgetLists(context, accountId))
+                        .also { listsByAccount[accountId] = it }
+                }
             }
             if (allLists == null) {
                 anyFetchFailed = true
@@ -132,6 +140,7 @@ class TodoWidgetWorker @AssistedInject constructor(
          */
         fun fetchHaLists(context: Context, httpClient: WidgetHttpClient, strict: Boolean = false): List<WidgetListData>? {
             val gson = Gson()
+            val accountId = httpClient.accountId
 
             val statesResponse = httpClient.get("api/states") ?: return null
             val statesJson = statesResponse.use { resp ->
@@ -143,6 +152,17 @@ class TodoWidgetWorker @AssistedInject constructor(
             val states: List<SimpleState> = gson.fromJson(statesJson, statesType)
             val todoEntities = states.filter { it.entity_id.startsWith("todo.") }
 
+            val haStates = todoEntities.map { entity ->
+                val friendlyName = entity.attributes?.get("friendly_name") as? String
+                val supportedFeatures = (entity.attributes?.get("supported_features") as? Number)?.toInt()
+                HaState(
+                    entityId = entity.entity_id,
+                    state = "0",
+                    attributes = HaAttributes(friendlyName = friendlyName, supportedFeatures = supportedFeatures)
+                )
+            }
+            TodoCacheManager.saveLists(context, accountId, haStates, notify = true)
+
             val allLists = mutableListOf<WidgetListData>()
             for (entity in todoEntities) {
                 val friendlyName = entity.attributes?.get("friendly_name") as? String
@@ -151,7 +171,7 @@ class TodoWidgetWorker @AssistedInject constructor(
                 val supportedFeatures = (entity.attributes?.get("supported_features") as? Number)?.toInt()
 
                 val payload = gson.toJson(mapOf("entity_id" to entity.entity_id))
-                val items = try {
+                val fetchedItems = try {
                     val response = httpClient.post(
                         "api/services/todo/get_items?return_response", payload
                     )
@@ -162,10 +182,23 @@ class TodoWidgetWorker @AssistedInject constructor(
                     }
                 } catch (_: Exception) {
                     null
-                } ?: if (strict) return null else emptyList()
+                }
+
+                val items = if (fetchedItems != null) {
+                    TodoCacheManager.mergeRemoteItemsAndSave(
+                        context = context,
+                        accountId = accountId,
+                        entityId = entity.entity_id,
+                        remoteItems = fetchedItems,
+                        notify = true
+                    )
+                } else {
+                    if (strict) return null
+                    TodoCacheManager.getEffectiveItems(context, accountId, entity.entity_id).orEmpty()
+                }
 
                 val resolved = ListIconManager.resolveIcon(
-                    context, TokenManager.scopedKey(httpClient.accountId, entity.entity_id), haIcon
+                    context, TokenManager.scopedKey(accountId, entity.entity_id), haIcon
                 )
                 allLists.add(
                     WidgetListData(
@@ -179,6 +212,25 @@ class TodoWidgetWorker @AssistedInject constructor(
                 )
             }
             return allLists
+        }
+
+        fun loadCachedWidgetLists(context: Context, accountId: String?): List<WidgetListData>? {
+            val cachedLists = TodoCacheManager.loadLists(context, accountId) ?: return null
+            return cachedLists.map { list ->
+                val items = TodoCacheManager.getEffectiveItems(context, accountId, list.entityId).orEmpty()
+                val resolved = ListIconManager.resolveIcon(
+                    context,
+                    TokenManager.scopedKey(accountId, list.entityId)
+                )
+                WidgetListData(
+                    entityId = list.entityId,
+                    name = list.attributes.friendlyName ?: list.entityId,
+                    items = items,
+                    iconType = resolved?.type?.name?.lowercase(),
+                    iconValue = resolved?.value,
+                    supportedFeatures = list.attributes.supportedFeatures
+                )
+            }
         }
 
         private fun parseItems(gson: Gson, json: String, entityId: String): List<TodoItem> {

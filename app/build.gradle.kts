@@ -20,7 +20,7 @@ android {
         applicationId = "com.baer.hado"
         minSdk = 33
         targetSdk = 36
-        versionCode = 21
+        versionCode = 23
         versionName = "1.4.0"
 
         manifestPlaceholders["appAuthRedirectScheme"] = "hado"

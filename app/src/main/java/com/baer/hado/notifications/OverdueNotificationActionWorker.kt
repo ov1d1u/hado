@@ -6,9 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.repository.TodoRepository
-import com.baer.hado.widget.TodoWidgetWorker
-import com.baer.hado.widget.WidgetHttpClient
-import com.google.gson.Gson
+import com.baer.hado.data.sync.TodoSyncManager
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.time.LocalDateTime
@@ -54,20 +52,14 @@ class OverdueNotificationActionWorker @AssistedInject constructor(
             }
 
             OverdueNotificationActionReceiver.ACTION_MARK_DONE -> {
-                if (accountId == null) {
-                    todoRepository.updateItemStatus(listId, itemUid, true).getOrElse {
-                        return Result.retry()
-                    }
-                } else {
-                    val payload = Gson().toJson(
-                        mapOf("entity_id" to listId, "item" to itemUid, "status" to "completed")
-                    )
-                    val ok = WidgetHttpClient(appContext, accountId)
-                        .post("api/services/todo/update_item", payload)
-                        ?.use { it.isSuccessful } ?: false
-                    if (!ok) return Result.retry()
-                }
-                TodoWidgetWorker.enqueueOneTime(appContext)
+                TodoSyncManager.toggleItem(
+                    context = appContext,
+                    accountId = accountId,
+                    entityId = listId,
+                    itemUid = itemUid,
+                    completed = true,
+                    isLocalMode = tokenManager.isDemoMode
+                )
             }
 
             else -> return Result.failure()

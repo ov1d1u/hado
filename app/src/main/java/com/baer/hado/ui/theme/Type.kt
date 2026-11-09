@@ -29,12 +29,12 @@ val Typography = Typography(
         lineHeight = 26.sp
     ),
     titleLarge = TextStyle(
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Normal,
         fontSize = 22.sp,
         lineHeight = 28.sp
     ),
     titleMedium = TextStyle(
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 28.sp
     ),

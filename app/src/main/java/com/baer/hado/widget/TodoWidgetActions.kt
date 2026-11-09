@@ -13,6 +13,7 @@ import com.baer.hado.data.local.LocalTodoStore
 import com.baer.hado.data.model.TodoItem
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.TodoItemStatus
+import com.baer.hado.data.sync.TodoSyncManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -145,33 +146,27 @@ class ToggleItemAction : ActionCallback {
         val newItemStatus = if (wasCompleted) TodoItemStatus.NEEDS_ACTION else TodoItemStatus.COMPLETED
         val previousItemStatus = if (wasCompleted) TodoItemStatus.COMPLETED else TodoItemStatus.NEEDS_ACTION
 
-        // Apply state immediately and lock the item while HA sync is in flight.
+        // Apply state immediately and lock the item briefly while local cache + sync runs.
         updateItemUiInWidgets(context, tokenManager, accountId, entityId, itemUid, status = newItemStatus, pending = true)
 
         withContext(Dispatchers.IO) {
             try {
-                if (tokenManager.isDemoMode) {
-                    LocalTodoStore(context).updateItemStatus(entityId, itemUid, newStatus == "completed")
-                } else {
+                if (!tokenManager.isDemoMode) {
                     checkNotNull(accountId) { "Widget server was removed" }
-                    val payload = Gson().toJson(mapOf(
-                        "entity_id" to entityId,
-                        "item" to itemUid,
-                        "status" to newStatus
-                    ))
-                    val httpClient = WidgetHttpClient(context, accountId)
-                    val response = httpClient.post("api/services/todo/update_item", payload)
-                    val wasSuccessful = response?.use { it.isSuccessful } ?: false
-                    if (!wasSuccessful) {
-                        throw IllegalStateException("Widget toggle sync failed")
-                    }
                 }
-
+                TodoSyncManager.toggleItem(
+                    context = context,
+                    accountId = accountId,
+                    entityId = entityId,
+                    itemUid = itemUid,
+                    completed = newStatus == "completed",
+                    isLocalMode = tokenManager.isDemoMode,
+                    preferredAppWidgetId = appWidgetId
+                )
                 waitForMinimumToggleLock(actionStartedAt)
                 updateItemUiInWidgets(context, tokenManager, accountId, entityId, itemUid, pending = false)
-                TodoWidgetWorker.enqueueOneTime(context)
             } catch (e: Exception) {
-                Log.w("HAdo", "Widget toggle sync failed, reverting optimistic state", e)
+                Log.w("HAdo", "Widget toggle failed, reverting state", e)
                 waitForMinimumToggleLock(actionStartedAt)
                 updateItemUiInWidgets(context, tokenManager, accountId, entityId, itemUid, status = previousItemStatus, pending = false)
             }

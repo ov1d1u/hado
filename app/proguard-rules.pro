@@ -15,6 +15,7 @@
 # Gson — data model classes
 -keep class com.baer.hado.data.model.** { *; }
 -keep class com.baer.hado.data.local.LocalTodoStore$* { *; }
+-keep class com.baer.hado.data.local.AddItemPosition { *; }
 
 # Gson — widget data classes serialized to/from Glance state
 -keep class com.baer.hado.widget.WidgetListData { *; }
@@ -35,6 +36,14 @@
 
 # Glance
 -keep class androidx.glance.** { *; }
+
+# Room / WorkManager (R8 full mode strips the no-arg constructor of RoomDatabase implementations loaded via Class.newInstance)
+-keep class * extends androidx.room.RoomDatabase {
+    <init>();
+}
+-keep class androidx.work.impl.WorkDatabase_Impl {
+    <init>();
+}
 
 # OkHttp (prevent R8 from stripping platform classes)
 -dontwarn okhttp3.internal.platform.**

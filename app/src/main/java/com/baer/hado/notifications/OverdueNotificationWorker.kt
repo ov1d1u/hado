@@ -109,6 +109,7 @@ class OverdueNotificationWorker @AssistedInject constructor(
             }
         }
         return TodoWidgetWorker.fetchHaLists(appContext, WidgetHttpClient(appContext, accountId), strict = true)
+            ?: TodoWidgetWorker.loadCachedWidgetLists(appContext, accountId)
     }
 
     private fun shouldNotifyNow(

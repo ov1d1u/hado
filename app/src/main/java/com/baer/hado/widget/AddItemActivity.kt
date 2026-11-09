@@ -21,7 +21,17 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.zIndex
+import com.baer.hado.ui.theme.TaskSurfaces
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
@@ -79,11 +89,13 @@ import com.baer.hado.R
 import com.baer.hado.data.local.AddItemPosition
 import com.baer.hado.data.local.AppPreferencesManager
 import com.baer.hado.data.local.LocalTodoStore
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.HaState
 import com.baer.hado.data.model.TodoItem
 import com.baer.hado.data.model.TodoItemStatus
 import com.baer.hado.data.model.TodoListFeature
+import com.baer.hado.data.sync.TodoSyncManager
 import com.baer.hado.ui.theme.HadoTheme
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -144,26 +156,6 @@ class AddItemActivity : ComponentActivity() {
     }
 }
 
-private object ItemsCache {
-    private const val PREFS_NAME = "hado_items_cache"
-
-    fun load(context: Context, entityId: String): List<TodoItem>? {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val json = prefs.getString(entityId, null) ?: return null
-        return try {
-            val type = object : TypeToken<List<TodoItem>>() {}.type
-            Gson().fromJson(json, type)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    fun save(context: Context, entityId: String, items: List<TodoItem>) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(entityId, Gson().toJson(items)).apply()
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TodoListEditor(
@@ -189,7 +181,9 @@ fun TodoListEditor(
     widgetAppWidgetId: Int? = null,
     autoFocusInput: Boolean = false,
     moveTargets: List<HaState> = emptyList(),
-    onItemMoved: (targetEntityId: String) -> Unit = {}
+    onItemMoved: (targetEntityId: String) -> Unit = {},
+    /** Shows a "Delete list" entry in the card header menu when set. */
+    onDeleteList: (() -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     val gson = remember { Gson() }
@@ -201,7 +195,7 @@ fun TodoListEditor(
     // Cache and icon keys include the server so equal entity ids on two servers stay apart.
     val storageKey = TokenManager.scopedKey(httpClient.accountId, entityId)
     val cachedItems = remember(entityId) {
-        val cached = ItemsCache.load(context, storageKey)
+        val cached = TodoCacheManager.getEffectiveItems(context, httpClient.accountId, entityId)
         Log.d("HAdo", "Cache for $entityId: ${cached?.size ?: "null"} items")
         cached
     }
@@ -214,7 +208,6 @@ fun TodoListEditor(
     var refocusTrigger by remember(entityId) { mutableIntStateOf(0) }
     var completedExpanded by remember(entityId) { mutableStateOf(!AppPreferencesManager.loadHideCompleted(context)) }
     var pendingDeletes by remember(entityId) { mutableStateOf(emptySet<String>()) }
-    val pendingToggleJobs = remember(entityId) { mutableMapOf<String, Job>() }
     var newlyAddedUids by remember(entityId) { mutableStateOf(setOf<String>()) }
     var draggedItemUid by remember(entityId) { mutableStateOf<String?>(null) }
     var detailItem by remember(entityId) { mutableStateOf<TodoItem?>(null) }
@@ -249,14 +242,28 @@ fun TodoListEditor(
     }
 
     LaunchedEffect(entityId, initialItems) {
-        if (initialItems.isNotEmpty()) {
-            items = initialItems
+        if (initialItems.isNotEmpty() || cachedItems == null) {
+            items = initialItems.ifEmpty {
+                TodoCacheManager.getEffectiveItems(context, httpClient.accountId, entityId).orEmpty()
+            }
             isLoading = false
         }
     }
 
+    // Observe cache updates (e.g., localUid -> remoteUid replacement or external QuickAdd)
+    LaunchedEffect(entityId, httpClient.accountId) {
+        TodoCacheManager.updates.collect { event ->
+            val targetAccount = if (isLocalMode) null else (httpClient.accountId ?: TokenManager(context).activeAccountId)
+            if (event.accountId == targetAccount && (event.entityId == null || event.entityId == entityId)) {
+                val updated = TodoCacheManager.getEffectiveItems(context, targetAccount, entityId)
+                if (updated != null && draggedItemUid == null) {
+                    items = updated
+                }
+            }
+        }
+    }
+
     LaunchedEffect(entityId, items) {
-        ItemsCache.save(context, storageKey, items)
         onItemsChanged(items)
     }
 
@@ -282,11 +289,14 @@ fun TodoListEditor(
         }
 
         if (isLocalMode) {
-            items = localStore?.getItems(entityId) ?: emptyList()
+            val localItems = localStore?.getItems(entityId) ?: emptyList()
+            items = localItems
+            TodoCacheManager.saveItems(context, null, entityId, localItems, notify = false)
             isLoading = false
         } else {
             withContext(Dispatchers.IO) {
                 try {
+                    TodoSyncManager.drainQueue(context, httpClient.accountId)
                     val payload = gson.toJson(mapOf("entity_id" to entityId))
                     val response = httpClient.post(
                         "api/services/todo/get_items?return_response", payload
@@ -296,8 +306,16 @@ fun TodoListEditor(
                             val body = resp.body?.string()
                             if (body != null) {
                                 val freshItems = parseItemsFromResponse(gson, body, entityId)
-                                items = freshItems
-                                ItemsCache.save(context, storageKey, freshItems)
+                                val effective = TodoCacheManager.mergeRemoteItemsAndSave(
+                                    context = context,
+                                    accountId = httpClient.accountId,
+                                    entityId = entityId,
+                                    remoteItems = freshItems,
+                                    notify = false
+                                )
+                                withContext(Dispatchers.Main) {
+                                    items = effective
+                                }
                             }
                         }
                     }
@@ -340,7 +358,6 @@ fun TodoListEditor(
         Log.d("HAdo", "addItem called with text='$text'")
         if (text.isBlank()) return
         val trimmed = text.trim()
-        val knownItemUids = items.map { it.uid }.toSet()
         newItemText = ""
         val addPosition = AppPreferencesManager.loadAddItemPosition(context)
         val prepend = addPosition == AddItemPosition.TOP
@@ -348,220 +365,54 @@ fun TodoListEditor(
         // Trigger re-focus on next frame for rapid multi-add
         refocusTrigger++
 
-        if (isLocalMode) {
-            val newItem = localStore?.addItem(entityId, trimmed, position = addPosition)
-            if (newItem != null) {
-                newlyAddedUids += newItem.uid
-                items = if (prepend) listOf(newItem) + items else items + listOf(newItem)
-                widgetAppWidgetId?.let { targetWidgetId ->
-                    scope.launch {
-                        WidgetStateMutator.addItem(context, httpClient.accountId, entityId, newItem, addPosition, targetWidgetId)
-                    }
-                }
-            }
-            onChanged()
-            return
-        }
-
-        // Optimistic UI update — add item immediately to local list
-        val tempItem = TodoItem(
-            uid = "temp_${System.currentTimeMillis()}",
+        val addedItem = TodoSyncManager.addItem(
+            context = context,
+            accountId = httpClient.accountId,
+            entityId = entityId,
             summary = trimmed,
-            status = TodoItemStatus.NEEDS_ACTION
+            position = addPosition,
+            isLocalMode = isLocalMode,
+            preferredAppWidgetId = widgetAppWidgetId
         )
-        newlyAddedUids += tempItem.uid
-        items = if (prepend) listOf(tempItem) + items else items + listOf(tempItem)
-
-        scope.launch(Dispatchers.IO) {
-            try {
-                val payload = gson.toJson(mapOf("entity_id" to entityId, "item" to trimmed))
-                val response = httpClient.post("api/services/todo/add_item", payload)
-                if (response == null) {
-                    withContext(Dispatchers.Main) {
-                        newlyAddedUids = newlyAddedUids - tempItem.uid
-                        items = items.filter { it.uid != tempItem.uid }
-                        showError(R.string.error_add_failed)
-                    }
-                }
-                response?.use { resp ->
-                    if (resp.isSuccessful) {
-                        Log.d("HAdo", "addItem succeeded: ${resp.code}")
-                        val added = resolveAddedItem(
-                            httpClient = httpClient,
-                            gson = gson,
-                            entityId = entityId,
-                            knownItemUids = knownItemUids,
-                            expectedSummary = trimmed
-                        )
-
-                        if (added != null) {
-                            val addedItem = added.item
-                            // Only move when prepending and HA didn't already place it first.
-                            if (prepend && !added.alreadyFirstActive) {
-                                val moved = httpClient.moveTodoItem(entityId, addedItem.uid, null)
-                                if (moved) {
-                                    Log.d("HAdo", "Moved added item to top: ${addedItem.uid}")
-                                } else {
-                                    Log.w("HAdo", "Failed to move added item to top: ${addedItem.uid}")
-                                }
-                            }
-
-                            withContext(NonCancellable) {
-                                widgetAppWidgetId?.let { targetWidgetId ->
-                                    WidgetStateMutator.addItem(
-                                        context,
-                                        httpClient.accountId,
-                                        entityId,
-                                        addedItem,
-                                        addPosition,
-                                        targetWidgetId
-                                    )
-                                }
-                            }
-                            if (currentCoroutineContext().isActive) {
-                                withContext(Dispatchers.Main) {
-                                    newlyAddedUids = (newlyAddedUids - tempItem.uid) + addedItem.uid
-                                    items = items.map { item ->
-                                        if (item.uid == tempItem.uid) addedItem else item
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Log.e("HAdo", "addItem failed: ${resp.code} ${resp.body?.string()}")
-                        withContext(Dispatchers.Main) {
-                            newlyAddedUids = newlyAddedUids - tempItem.uid
-                            items = items.filter { it.uid != tempItem.uid }
-                            showError(R.string.error_add_failed)
-                        }
-                    }
-                }
-                withContext(NonCancellable) {
-                    onChanged()
-                }
-            } catch (e: Exception) {
-                Log.e("HAdo", "addItem failed", e)
-                withContext(Dispatchers.Main) {
-                    newlyAddedUids = newlyAddedUids - tempItem.uid
-                    items = items.filter { it.uid != tempItem.uid }
-                    showError(R.string.error_add_failed)
-                }
-            }
+        newlyAddedUids += addedItem.uid
+        if (items.none { it.uid == addedItem.uid }) {
+            items = if (prepend) listOf(addedItem) + items else items + listOf(addedItem)
         }
     }
 
     fun toggleItem(item: TodoItem) {
-        val newStatus = if (item.isCompleted) "needs_action" else "completed"
+        val completed = !item.isCompleted
         // Optimistic update immediately
         items = items.map {
             if (it.uid == item.uid) it.copy(
-                status = if (item.isCompleted) TodoItemStatus.NEEDS_ACTION
-                else TodoItemStatus.COMPLETED
+                status = if (completed) TodoItemStatus.COMPLETED else TodoItemStatus.NEEDS_ACTION
             ) else it
         }
-
-        if (isLocalMode) {
-            localStore?.updateItemStatus(entityId, item.uid, newStatus == "completed")
-            onChanged()
-            return
-        }
-
-        // Cancel any in-flight toggle for this item so rapid re-taps coalesce into one API call
-        pendingToggleJobs[item.uid]?.cancel()
-        var job: Job? = null
-        job = scope.launch(Dispatchers.IO) {
-            try {
-                delay(350) // debounce: wait for user to settle before sending to HA
-                val payload = gson.toJson(mapOf(
-                    "entity_id" to entityId,
-                    "item" to item.uid,
-                    "status" to newStatus
-                ))
-                val response = httpClient.post("api/services/todo/update_item", payload)
-                if (response == null) {
-                    withContext(Dispatchers.Main) {
-                        items = items.map { if (it.uid == item.uid) item else it }
-                        showError(R.string.error_toggle_failed)
-                    }
-                }
-                response?.use { resp ->
-                    if (resp.isSuccessful) {
-                        Log.d("HAdo", "toggleItem succeeded: ${resp.code}")
-                    } else {
-                        Log.e("HAdo", "toggleItem failed: ${resp.code} ${resp.body?.string()}")
-                        withContext(Dispatchers.Main) {
-                            items = items.map { if (it.uid == item.uid) item else it }
-                            showError(R.string.error_toggle_failed)
-                        }
-                    }
-                }
-                onChanged()
-            } catch (e: CancellationException) {
-                throw e // rapid re-tap cancelled this job; optimistic state already reflects next toggle
-            } catch (e: Exception) {
-                Log.e("HAdo", "toggleItem failed", e)
-                withContext(Dispatchers.Main) {
-                    items = items.map { if (it.uid == item.uid) item else it }
-                    showError(R.string.error_toggle_failed)
-                }
-            } finally {
-                if (pendingToggleJobs[item.uid] === job) pendingToggleJobs.remove(item.uid)
-            }
-        }
-        pendingToggleJobs[item.uid] = job
+        TodoSyncManager.toggleItem(
+            context = context,
+            accountId = httpClient.accountId,
+            entityId = entityId,
+            itemUid = item.uid,
+            completed = completed,
+            isLocalMode = isLocalMode,
+            preferredAppWidgetId = widgetAppWidgetId
+        )
     }
 
     fun deleteItem(item: TodoItem) {
-        val originalIndex = items.indexOfFirst { it.uid == item.uid }
         pendingDeletes = pendingDeletes + item.uid
         scope.launch {
             delay(300) // match exit animation duration
             items = items.filter { it.uid != item.uid }
             pendingDeletes = pendingDeletes - item.uid
-        }
-
-        if (isLocalMode) {
-            localStore?.removeItem(entityId, item.uid)
-            onChanged()
-            return
-        }
-
-        scope.launch(Dispatchers.IO) {
-            try {
-                val payload = gson.toJson(mapOf(
-                    "entity_id" to entityId,
-                    "item" to item.uid
-                ))
-                val response = httpClient.post("api/services/todo/remove_item", payload)
-                if (response == null) {
-                    withContext(Dispatchers.Main) {
-                        if (items.none { it.uid == item.uid }) {
-                            items = items.toMutableList().apply {
-                                add(originalIndex.coerceIn(0, size), item)
-                            }
-                        }
-                        showError(R.string.error_delete_failed)
-                    }
-                }
-                response?.use { resp ->
-                    if (resp.isSuccessful) {
-                        Log.d("HAdo", "deleteItem succeeded: ${resp.code}")
-                    } else {
-                        Log.e("HAdo", "deleteItem failed: ${resp.code} ${resp.body?.string()}")
-                        withContext(Dispatchers.Main) {
-                            if (items.none { it.uid == item.uid }) {
-                                items = items.toMutableList().apply {
-                                    add(originalIndex.coerceIn(0, size), item)
-                                }
-                            }
-                            showError(R.string.error_delete_failed)
-                        }
-                    }
-                }
-                onChanged()
-            } catch (e: Exception) {
-                Log.e("HAdo", "deleteItem failed", e)
-            }
+            TodoSyncManager.deleteItem(
+                context = context,
+                accountId = httpClient.accountId,
+                entityId = entityId,
+                itemUid = item.uid,
+                isLocalMode = isLocalMode,
+                preferredAppWidgetId = widgetAppWidgetId
+            )
         }
     }
 
@@ -569,16 +420,13 @@ fun TodoListEditor(
         scope.launch(Dispatchers.Main) { snackbarHostState.showSnackbar(message) }
     }
 
-    // HA has no cross-list move: add to the target, then remove from the source only after the add succeeded.
+    // Moves an item to another list locally right away and queues the remote add + remove.
     fun moveItem(item: TodoItem, target: HaState) {
         val targetId = target.entityId
         val targetName = target.attributes.friendlyName ?: targetId
         val targetFeatures = target.attributes.supportedFeatures ?: 0
         val current = items.firstOrNull { it.uid == item.uid } ?: item
-        val originalIndex = items.indexOfFirst { it.uid == current.uid }
-        val plan = buildMovePayload(current, targetFeatures)
         val addPosition = AppPreferencesManager.loadAddItemPosition(context)
-        val toggleJob = pendingToggleJobs[current.uid]
 
         pendingDeletes = pendingDeletes + current.uid
         scope.launch {
@@ -587,107 +435,19 @@ fun TodoListEditor(
                 items = items.filter { it.uid != current.uid }
                 pendingDeletes = pendingDeletes - current.uid
             }
-        }
-
-        fun restoreRow() {
-            pendingDeletes = pendingDeletes - current.uid
-            if (items.none { it.uid == current.uid }) {
-                items = items.toMutableList().apply { add(originalIndex.coerceIn(0, size), current) }
-            }
-        }
-
-        if (isLocalMode) {
-            val moved = current.copy(
-                description = plan.description,
-                due = plan.due,
-                status = if (plan.markCompleted) TodoItemStatus.COMPLETED else TodoItemStatus.NEEDS_ACTION
+            TodoSyncManager.moveItemToList(
+                context = context,
+                accountId = httpClient.accountId,
+                fromEntityId = entityId,
+                toEntityId = targetId,
+                targetFeatures = targetFeatures,
+                item = current,
+                position = addPosition,
+                isLocalMode = isLocalMode,
+                preferredAppWidgetId = widgetAppWidgetId
             )
-            localStore?.moveItemToList(entityId, targetId, moved, addPosition)
             showMessage(context.getString(R.string.move_done, targetName))
-            // Source reload first: the Home view model cancels an older load when a newer one starts.
-            onChanged()
             onItemMoved(targetId)
-            return
-        }
-
-        scope.launch(Dispatchers.IO) {
-            withContext(NonCancellable) {
-                toggleJob?.join() // let a debounced toggle reach HA so a failed move restores the real status
-                var added = false
-                try {
-                    val targetUids = fetchListItems(httpClient, gson, targetId)?.map { it.uid }?.toSet()
-                    if (targetUids != null) {
-                        val addBody = mapOf("entity_id" to targetId, "item" to current.summary) + plan.haFields()
-                        added = httpClient.post("api/services/todo/add_item", gson.toJson(addBody))
-                            ?.use { resp ->
-                                if (!resp.isSuccessful) Log.e("HAdo", "move add failed: ${resp.code} ${resp.body?.string()}")
-                                resp.isSuccessful
-                            } == true
-                    }
-                    if (!added) {
-                        withContext(Dispatchers.Main) {
-                            restoreRow()
-                            showError(R.string.error_move_failed)
-                        }
-                        return@withContext
-                    }
-
-                    val resolved = resolveAddedItem(httpClient, gson, targetId, targetUids!!, current.summary)
-                    if (resolved != null) {
-                        val newUid = resolved.item.uid
-                        if (addPosition == AddItemPosition.TOP && !current.isCompleted && !resolved.alreadyFirstActive &&
-                            TodoListFeature.hasFeature(targetFeatures, TodoListFeature.MOVE_TODO_ITEM)
-                        ) {
-                            if (!httpClient.moveTodoItem(targetId, newUid, null)) {
-                                Log.w("HAdo", "Failed to move moved item to top: $newUid")
-                            }
-                        }
-                        if (plan.markCompleted) {
-                            val body = mapOf("entity_id" to targetId, "item" to newUid, "status" to "completed")
-                            httpClient.post("api/services/todo/update_item", gson.toJson(body))?.use { resp ->
-                                if (!resp.isSuccessful) Log.w("HAdo", "move mark completed failed: ${resp.code}")
-                            }
-                        }
-                    } else {
-                        Log.w("HAdo", "Could not resolve moved item in $targetId")
-                    }
-
-                    val removeBody = mapOf("entity_id" to entityId, "item" to current.uid)
-                    val removed = httpClient.post("api/services/todo/remove_item", gson.toJson(removeBody))
-                        ?.use { resp ->
-                            if (!resp.isSuccessful) Log.e("HAdo", "move remove failed: ${resp.code} ${resp.body?.string()}")
-                            resp.isSuccessful
-                        } == true
-                    if (!removed) {
-                        val fresh = fetchListItems(httpClient, gson, entityId)
-                        withContext(Dispatchers.Main) {
-                            pendingDeletes = pendingDeletes - current.uid
-                            if (fresh != null) items = fresh else restoreRow()
-                            showMessage(context.getString(R.string.error_move_remove_failed, targetName))
-                            onItemMoved(targetId)
-                        }
-                        return@withContext
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        showMessage(context.getString(R.string.move_done, targetName))
-                        onChanged()
-                        onItemMoved(targetId)
-                    }
-                } catch (e: Exception) {
-                    Log.e("HAdo", "moveItem failed", e)
-                    withContext(Dispatchers.Main) {
-                        if (added) {
-                            showMessage(context.getString(R.string.error_move_remove_failed, targetName))
-                            onChanged()
-                            onItemMoved(targetId)
-                        } else {
-                            restoreRow()
-                            showError(R.string.error_move_failed)
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -695,10 +455,13 @@ fun TodoListEditor(
     LaunchedEffect(pullToRefreshState.isRefreshing) {
         if (!pullToRefreshState.isRefreshing) return@LaunchedEffect
         if (isLocalMode) {
-            items = localStore?.getItems(entityId) ?: emptyList()
+            val localItems = localStore?.getItems(entityId) ?: emptyList()
+            items = localItems
+            TodoCacheManager.saveItems(context, null, entityId, localItems, notify = false)
         } else {
             withContext(Dispatchers.IO) {
                 try {
+                    TodoSyncManager.drainQueue(context, httpClient.accountId)
                     val payload = gson.toJson(mapOf("entity_id" to entityId))
                     val response = httpClient.post(
                         "api/services/todo/get_items?return_response", payload
@@ -708,8 +471,14 @@ fun TodoListEditor(
                             val body = resp.body?.string()
                             if (body != null) {
                                 val freshItems = parseItemsFromResponse(gson, body, entityId)
-                                withContext(Dispatchers.Main) { items = freshItems }
-                                ItemsCache.save(context, storageKey, freshItems)
+                                val effective = TodoCacheManager.mergeRemoteItemsAndSave(
+                                    context = context,
+                                    accountId = httpClient.accountId,
+                                    entityId = entityId,
+                                    remoteItems = freshItems,
+                                    notify = false
+                                )
+                                withContext(Dispatchers.Main) { items = effective }
                             }
                         }
                     }
@@ -763,13 +532,14 @@ fun TodoListEditor(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
+                        containerColor = TaskSurfaces.page,
+                        scrolledContainerColor = TaskSurfaces.page,
                         navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                     )
                 )
             }
         },
-        containerColor = MaterialTheme.colorScheme.surface
+        containerColor = TaskSurfaces.page
     ) { padding ->
         Box(
             modifier = Modifier
@@ -782,22 +552,21 @@ fun TodoListEditor(
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding(),
-                contentPadding = PaddingValues(bottom = contentBottomPadding)
+                contentPadding = PaddingValues(top = 8.dp, bottom = contentBottomPadding)
             ) {
-                // List title with icon (Keep: 24sp, paddingTop 12dp)
-                if (showListHeader && !showTopBar) {
-                    item {
-                        ListTitle(
+                // Top of the tasks card: the list name, or a thin cap when the top bar already shows it.
+                item(key = "card-top") {
+                    if (showListHeader && !showTopBar) {
+                        CardHeader(
                             resolvedIcon = resolvedIcon,
                             listName = listName,
-                            iconSize = 32.dp,
-                            textStyle = MaterialTheme.typography.headlineMedium.copy(fontSize = 24.sp),
-                            modifier = Modifier.padding(
-                                start = 20.dp,
-                                end = 20.dp,
-                                top = 12.dp,
-                                bottom = 16.dp
-                            )
+                            onDeleteList = onDeleteList
+                        )
+                    } else {
+                        Spacer(
+                            modifier = Modifier
+                                .cardSection(TaskSurfaces.cardTopShape)
+                                .height(8.dp)
                         )
                     }
                 }
@@ -805,23 +574,44 @@ fun TodoListEditor(
                 // Add item row (above uncompleted items)
                 if (showAddRow) {
                     item(key = "add-item-row") {
-                        AddItemRow(
-                            text = newItemText,
-                            onTextChange = { newItemText = it },
-                            onAdd = { addItem(newItemText) },
-                            focusRequester = addFocusRequester,
-                            onFocusChanged = { isFocused ->
-                                isAddInputFocused = isFocused
-                            }
-                        )
+                        Box(modifier = Modifier.cardSection()) {
+                            AddItemRow(
+                                text = newItemText,
+                                onTextChange = { newItemText = it },
+                                onAdd = { addItem(newItemText) },
+                                focusRequester = addFocusRequester,
+                                onFocusChanged = { isFocused ->
+                                    isAddInputFocused = isFocused
+                                }
+                            )
+                        }
                     }
                 }
 
                 // Uncompleted items with drag handles
                 val uncompleted = items.filter { !it.isCompleted }
+                if (uncompleted.isEmpty() && !showAddRow && !isLoading) {
+                    item(key = "empty-tasks") {
+                        Text(
+                            text = stringResource(R.string.home_no_items),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .cardSection()
+                                .padding(horizontal = 20.dp, vertical = 24.dp)
+                        )
+                    }
+                }
                 itemsIndexed(uncompleted, key = { _, item -> item.uid }) { _, item ->
                     val isDragging = draggedItemUid == item.uid
 
+                    Box(
+                        modifier = Modifier
+                            .then(if (draggedItemUid != null) Modifier else Modifier.animateItemPlacement())
+                            // The dragged row floats over its neighbours' card background.
+                            .zIndex(if (isDragging) 1f else 0f)
+                            .cardSection()
+                    ) {
                     AnimatedVisibility(
                         visible = item.uid !in pendingDeletes,
                         enter = if (item.uid in newlyAddedUids) fadeIn(tween(300)) + expandVertically(
@@ -831,8 +621,7 @@ fun TodoListEditor(
                         exit = fadeOut(tween(300)) + shrinkVertically(
                             shrinkTowards = Alignment.Top,
                             animationSpec = tween(300)
-                        ),
-                        modifier = if (draggedItemUid != null) Modifier else Modifier.animateItemPlacement()
+                        )
                     ) {
                         TodoItemRow(
                             item = item,
@@ -888,76 +677,86 @@ fun TodoListEditor(
                                 draggedItemUid = null
                                 dragOffsetY = 0f
                                 if (finishedUid != null) {
-                                    if (isLocalMode) {
-                                        // Persist new order locally
-                                        val finalUncompleted = currentItemsState.filter { !it.isCompleted }
-                                        val finalIndex = finalUncompleted.indexOfFirst { it.uid == finishedUid }
-                                        if (finalIndex >= 0) {
-                                            val prevUid = if (finalIndex > 0) finalUncompleted[finalIndex - 1].uid else null
-                                            localStore?.moveItem(entityId, finishedUid, prevUid)
-                                            onChanged()
-                                        }
-                                    } else {
-                                    // Sync to HA via WebSocket
-                                    scope.launch(Dispatchers.IO) {
-                                        try {
-                                            val finalUncompleted = currentItemsState.filter { !it.isCompleted }
-                                            val finalIndex = finalUncompleted.indexOfFirst { it.uid == finishedUid }
-                                            if (finalIndex < 0) return@launch
-                                            val prevUid = if (finalIndex > 0) finalUncompleted[finalIndex - 1].uid else null
-                                            val ok = httpClient.moveTodoItem(entityId, finishedUid, prevUid)
-                                            if (ok) {
-                                                Log.d("HAdo", "moveTodoItem succeeded: $finishedUid after $prevUid")
-                                                onChanged()
-                                            } else {
-                                                Log.w("HAdo", "moveTodoItem not supported or failed for this entity")
-                                                showError(R.string.error_reorder_failed)
-                                                onChanged()
-                                            }
-                                        } catch (e: Exception) {
-                                            Log.e("HAdo", "moveTodoItem error", e)
-                                        }
-                                    }
+                                    val finalUncompleted = currentItemsState.filter { !it.isCompleted }
+                                    val finalIndex = finalUncompleted.indexOfFirst { it.uid == finishedUid }
+                                    if (finalIndex >= 0) {
+                                        val prevUid = if (finalIndex > 0) finalUncompleted[finalIndex - 1].uid else null
+                                        TodoSyncManager.reorderItem(
+                                            context = context,
+                                            accountId = httpClient.accountId,
+                                            entityId = entityId,
+                                            reorderedItems = currentItemsState,
+                                            movedUid = finishedUid,
+                                            previousUid = prevUid,
+                                            isLocalMode = isLocalMode,
+                                            preferredAppWidgetId = widgetAppWidgetId
+                                        )
                                     }
                                 }
                             }
                         )
                     }
+                    }
                 }
 
-                // Completed items section with collapsible header
+                item(key = "card-bottom") {
+                    Spacer(
+                        modifier = Modifier
+                            .cardSection(TaskSurfaces.cardBottomShape)
+                            .height(12.dp)
+                    )
+                }
+
+                // Completed items live in their own card under the tasks card
                 val completed = items.filter { it.isCompleted }
                 if (completed.isNotEmpty()) {
-                    item {
+                    item(key = "completed-header") {
                         CompletedSectionHeader(
                             count = completed.size,
                             expanded = completedExpanded,
-                            onToggle = { completedExpanded = !completedExpanded }
+                            onToggle = { completedExpanded = !completedExpanded },
+                            modifier = Modifier
+                                .padding(top = 12.dp)
+                                .cardSection(
+                                    if (completedExpanded) TaskSurfaces.cardTopShape else TaskSurfaces.cardShape
+                                )
                         )
                     }
                     if (completedExpanded) {
                         items(completed, key = { it.uid }) { item ->
-                            AnimatedVisibility(
-                                visible = item.uid !in pendingDeletes,
-                                enter = if (item.uid in newlyAddedUids) fadeIn(tween(300)) + expandVertically(
-                                    expandFrom = Alignment.Top,
-                                    animationSpec = tween(300)
-                                ) else EnterTransition.None,
-                                exit = fadeOut(tween(300)) + shrinkVertically(
-                                    shrinkTowards = Alignment.Top,
-                                    animationSpec = tween(300)
-                                ),
-                                modifier = Modifier.animateItemPlacement()
+                            Box(
+                                modifier = Modifier
+                                    .animateItemPlacement()
+                                    .cardSection()
                             ) {
-                                TodoItemRow(
-                                    item = item,
-                                    onToggle = { toggleItem(item) },
-                                    onDelete = { deleteItem(item) },
-                                    onOpenDetails = { detailItem = item },
-                                    showDragHandle = false,
-                                    checkboxOnly = checkboxOnly
-                                )
+                                AnimatedVisibility(
+                                    visible = item.uid !in pendingDeletes,
+                                    enter = if (item.uid in newlyAddedUids) fadeIn(tween(300)) + expandVertically(
+                                        expandFrom = Alignment.Top,
+                                        animationSpec = tween(300)
+                                    ) else EnterTransition.None,
+                                    exit = fadeOut(tween(300)) + shrinkVertically(
+                                        shrinkTowards = Alignment.Top,
+                                        animationSpec = tween(300)
+                                    )
+                                ) {
+                                    TodoItemRow(
+                                        item = item,
+                                        onToggle = { toggleItem(item) },
+                                        onDelete = { deleteItem(item) },
+                                        onOpenDetails = { detailItem = item },
+                                        showDragHandle = false,
+                                        checkboxOnly = checkboxOnly
+                                    )
+                                }
                             }
+                        }
+                        item(key = "completed-bottom") {
+                            Spacer(
+                                modifier = Modifier
+                                    .cardSection(TaskSurfaces.cardBottomShape)
+                                    .height(8.dp)
+                            )
                         }
                     }
                 }
@@ -981,7 +780,7 @@ fun TodoListEditor(
             supportsDueDate = supportsDueDate,
             supportsDueDatetime = supportsDueDatetime,
             onDismiss = { detailItem = null },
-            onMoveToList = if (moveTargets.isNotEmpty() && supportsDelete && !item.uid.startsWith("temp_")) {
+            onMoveToList = if (moveTargets.isNotEmpty() && supportsDelete) {
                 {
                     detailItem = null
                     moveCandidate = item
@@ -991,53 +790,15 @@ fun TodoListEditor(
                 // Optimistic UI update
                 items = items.map { if (it.uid == item.uid) updatedItem else it }
                 detailItem = null
-
-                if (isLocalMode) {
-                    localStore?.updateItemDetails(
-                        entityId, item.uid,
-                        updatedItem.summary,
-                        updatedItem.description,
-                        updatedItem.due
-                    )
-                    onChanged()
-                } else {
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        val body = mutableMapOf(
-                            "entity_id" to entityId,
-                            "item" to item.uid
-                        )
-                        if (updatedItem.summary != item.summary) {
-                            body["rename"] = updatedItem.summary
-                        }
-                        if (updatedItem.description != item.description) {
-                            body["description"] = updatedItem.description ?: ""
-                        }
-                        val newDue = updatedItem.due
-                        if (newDue != item.due) {
-                            if (newDue == null) {
-                                body["due_date"] = ""
-                            } else if (newDue.contains("T") || (newDue.contains(" ") && newDue.length > 10)) {
-                                body["due_datetime"] = newDue.replace("T", " ")
-                            } else {
-                                body["due_date"] = newDue
-                            }
-                        }
-                        val payload = gson.toJson(body)
-                        val response = httpClient.post("api/services/todo/update_item", payload)
-                        response?.use { resp ->
-                            if (resp.isSuccessful) {
-                                Log.d("HAdo", "updateItemDetails succeeded: ${resp.code}")
-                            } else {
-                                Log.e("HAdo", "updateItemDetails failed: ${resp.code} ${resp.body?.string()}")
-                            }
-                        }
-                        onChanged()
-                    } catch (e: Exception) {
-                        Log.e("HAdo", "updateItemDetails failed", e)
-                    }
-                }
-                }
+                TodoSyncManager.updateItemDetails(
+                    context = context,
+                    accountId = httpClient.accountId,
+                    entityId = entityId,
+                    original = item,
+                    updated = updatedItem,
+                    isLocalMode = isLocalMode,
+                    preferredAppWidgetId = widgetAppWidgetId
+                )
             }
         )
     }
@@ -1174,28 +935,27 @@ private fun TodoItemRow(
     checkboxOnly: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val overdueColor = if (item.isOverdue) MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
-    else Color.Transparent
-
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(overdueColor)
+            .graphicsLayer {
+                if (isDragging) {
+                    translationY = dragOffsetY
+                    shadowElevation = 8f
+                    shape = RoundedCornerShape(12.dp)
+                    clip = true
+                    scaleX = 1.02f
+                    scaleY = 1.02f
+                }
+            }
+            .background(TaskSurfaces.card)
             .combinedClickable(
                 onClick = { if (checkboxOnly) onOpenDetails() else onToggle() },
                 onLongClick = { onOpenDetails() }
             )
             .height(IntrinsicSize.Min)
-            .defaultMinSize(minHeight = 48.dp)
-            .padding(start = 6.dp, end = 6.dp)
-            .graphicsLayer {
-                if (isDragging) {
-                    translationY = dragOffsetY
-                    shadowElevation = 8f
-                    scaleX = 1.02f
-                    scaleY = 1.02f
-                }
-            },
+            .defaultMinSize(minHeight = 52.dp)
+            .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Drag handle (Keep: 48dp touch target, only on uncompleted)
@@ -1221,24 +981,14 @@ private fun TodoItemRow(
             )
         }
 
-        // Checkbox
-        Checkbox(
-            checked = item.isCompleted,
-            onCheckedChange = { onToggle() },
-            modifier = Modifier.size(48.dp),
-            colors = CheckboxDefaults.colors(
-                checkedColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                checkmarkColor = MaterialTheme.colorScheme.surface
-            )
-        )
+        RoundCheckbox(checked = item.isCompleted, onToggle = onToggle)
 
-        // Item text with optional due date + description preview
-        Spacer(modifier = Modifier.width(6.dp))
+        // Item text with optional description preview + due date
+        Spacer(modifier = Modifier.width(4.dp))
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = 2.dp)
+                .padding(vertical = 8.dp)
         ) {
             Text(
                 text = item.summary,
@@ -1247,25 +997,30 @@ private fun TodoItemRow(
                 else MaterialTheme.colorScheme.onSurface,
                 textDecoration = if (item.isCompleted) TextDecoration.LineThrough else null,
             )
-            // Due date indicator
-            if (item.due != null) {
-                val dueText = formatDueDisplay(androidx.compose.ui.platform.LocalContext.current, item)
-                Text(
-                    text = dueText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (item.isOverdue) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
             // Description preview (first line only)
             if (!item.description.isNullOrBlank()) {
                 Text(
                     text = item.description.lines().first(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (item.due != null) {
+                val dueText = formatDueDisplay(androidx.compose.ui.platform.LocalContext.current, item)
+                val isToday = (item.dueDateTime?.toLocalDate() ?: item.dueDate) == java.time.LocalDate.now()
+                Text(
+                    text = dueText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when {
+                        item.isCompleted -> MaterialTheme.colorScheme.onSurfaceVariant
+                        item.isOverdue -> MaterialTheme.colorScheme.error
+                        isToday -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp)
                 )
             }
         }
@@ -1278,8 +1033,46 @@ private fun TodoItemRow(
             Icon(
                 Icons.Default.Close,
                 contentDescription = stringResource(R.string.cd_delete),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/** Google Tasks style toggle: an empty ring, or a filled circle with a check when done. */
+@Composable
+private fun RoundCheckbox(checked: Boolean, onToggle: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .toggleable(
+                value = checked,
+                role = Role.Checkbox,
+                onValueChange = { onToggle() }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (checked) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .border(2.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape)
             )
         }
     }
@@ -1289,15 +1082,22 @@ private fun TodoItemRow(
 private fun CompletedSectionHeader(
     count: Int,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clickable(onClick = onToggle)
-            .padding(start = 6.dp, end = 20.dp),
+            .defaultMinSize(minHeight = 56.dp)
+            .padding(start = 20.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Text(
+            text = stringResource(R.string.completed_count, count),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
         Icon(
             imageVector = if (expanded) Icons.Default.KeyboardArrowUp
             else Icons.Default.KeyboardArrowDown,
@@ -1305,12 +1105,60 @@ private fun CompletedSectionHeader(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(48.dp).padding(12.dp)
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = stringResource(R.string.completed_count, count),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+    }
+}
+
+/** One horizontal slice of a Google Tasks style card; stacked slices read as one card. */
+private fun Modifier.cardSection(shape: Shape? = null): Modifier = composed {
+    val color = TaskSurfaces.card
+    this
+        .fillMaxWidth()
+        .padding(horizontal = TaskSurfaces.cardHorizontalMargin)
+        .then(if (shape != null) Modifier.clip(shape) else Modifier)
+        .background(color)
+}
+
+@Composable
+private fun CardHeader(
+    resolvedIcon: ListIconManager.ResolvedIcon?,
+    listName: String,
+    onDeleteList: (() -> Unit)?
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .cardSection(TaskSurfaces.cardTopShape)
+            .defaultMinSize(minHeight = 60.dp)
+            .padding(start = 20.dp, end = 4.dp, top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ListTitle(
+            resolvedIcon = resolvedIcon,
+            listName = listName,
+            iconSize = 26.dp,
+            textStyle = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.weight(1f)
         )
+        if (onDeleteList != null) {
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = stringResource(R.string.cd_more_options),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_delete_list)) },
+                        onClick = {
+                            menuOpen = false
+                            onDeleteList()
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1508,19 +1356,25 @@ private fun parseItemsFromResponse(
     }
 }
 
+/** Google Tasks style due text: "Today, 12:30 PM", "Wed, Nov 13", "Nov 13, 2027". */
 private fun formatDueDisplay(context: Context, item: TodoItem): String {
     val dt = item.dueDateTime
-    if (dt != null) {
-        val time = if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy $time")
-        return (if (item.isOverdue) "⚠ " else "📅 ") + dt.format(formatter)
+    val date = dt?.toLocalDate() ?: item.dueDate ?: return ""
+    val locale = java.util.Locale.getDefault()
+    val today = java.time.LocalDate.now()
+    fun pattern(skeleton: String) = java.time.format.DateTimeFormatter.ofPattern(
+        android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton), locale
+    )
+    val dayPart = when {
+        date == today -> context.getString(R.string.due_today)
+        date == today.plusDays(1) -> context.getString(R.string.due_tomorrow)
+        date == today.minusDays(1) -> context.getString(R.string.due_yesterday)
+        date.year == today.year -> date.format(pattern("EEEMMMd"))
+        else -> date.format(pattern("MMMdyyyy"))
     }
-    val d = item.dueDate
-    if (d != null) {
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy")
-        return (if (item.isOverdue) "⚠ " else "📅 ") + d.format(formatter)
-    }
-    return ""
+    if (dt == null) return dayPart
+    val timeSkeleton = if (android.text.format.DateFormat.is24HourFormat(context)) "Hm" else "hm"
+    return "$dayPart, ${dt.format(pattern(timeSkeleton))}"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

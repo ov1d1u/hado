@@ -4,10 +4,12 @@ import android.content.Context
 import com.baer.hado.data.api.HaApiService
 import com.baer.hado.data.local.AddItemPosition
 import com.baer.hado.data.local.LocalTodoStore
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.HaState
 import com.baer.hado.data.model.TodoItem
 import com.baer.hado.data.model.TodoItemStatus
+import com.baer.hado.data.sync.TodoSyncManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -28,14 +30,35 @@ class TodoRepository @Inject constructor(
 
     private val localStore by lazy { LocalTodoStore(context) }
 
+    private val activeAccountId: String?
+        get() = if (tokenManager.isDemoMode) null else tokenManager.activeAccountId
+
+    fun getCachedTodoLists(): List<HaState> {
+        if (tokenManager.isDemoMode) {
+            return localStore.getLists()
+        }
+        return TodoCacheManager.loadLists(context, activeAccountId).orEmpty()
+    }
+
+    fun getCachedTodoItems(entityId: String): List<TodoItem>? {
+        if (tokenManager.isDemoMode) {
+            return localStore.getItems(entityId)
+        }
+        return TodoCacheManager.getEffectiveItems(context, activeAccountId, entityId)
+    }
+
     suspend fun getTodoLists(): Result<List<HaState>> {
         if (tokenManager.isDemoMode) {
             return Result.success(localStore.getLists())
         }
+        val accountId = activeAccountId
         return try {
             val states = apiService.getStates()
             val todoEntities = states.filter { it.entityId.startsWith("todo.") }
+            TodoCacheManager.saveLists(context, accountId, todoEntities, notify = false)
             Result.success(todoEntities)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -45,7 +68,9 @@ class TodoRepository @Inject constructor(
         if (tokenManager.isDemoMode) {
             return Result.success(localStore.getItems(entityId))
         }
+        val accountId = activeAccountId
         return try {
+            TodoSyncManager.drainQueue(context, accountId)
             val body = mapOf(
                 "entity_id" to entityId
             )
@@ -59,7 +84,14 @@ class TodoRepository @Inject constructor(
                 ?: return Result.success(emptyList())
 
             val parsed = parseItemsResponse(responseBody, entityId)
-            Result.success(parsed)
+            val effective = TodoCacheManager.mergeRemoteItemsAndSave(
+                context = context,
+                accountId = accountId,
+                entityId = entityId,
+                remoteItems = parsed,
+                notify = false
+            )
+            Result.success(effective)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -116,21 +148,18 @@ class TodoRepository @Inject constructor(
         dueDatetime: String? = null,
         position: AddItemPosition = AddItemPosition.TOP
     ): Result<Unit> {
-        if (tokenManager.isDemoMode) {
-            localStore.addItem(entityId, summary, description, dueDatetime ?: dueDate, position)
-            return Result.success(Unit)
-        }
         return try {
-            val body = mutableMapOf(
-                "entity_id" to entityId,
-                "item" to summary
+            TodoSyncManager.addItem(
+                context = context,
+                accountId = activeAccountId,
+                entityId = entityId,
+                summary = summary,
+                description = description,
+                due = dueDatetime ?: dueDate,
+                position = position,
+                isLocalMode = tokenManager.isDemoMode
             )
-            description?.let { body["description"] = it }
-            dueDate?.let { body["due_date"] = it }
-            dueDatetime?.let { body["due_datetime"] = it }
-            val response = apiService.addTodoItem(body)
-            if (response.isSuccessful) Result.success(Unit)
-            else Result.failure(Exception("Failed to add item: ${response.code()}"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -141,20 +170,16 @@ class TodoRepository @Inject constructor(
         itemUid: String,
         completed: Boolean
     ): Result<Unit> {
-        if (tokenManager.isDemoMode) {
-            localStore.updateItemStatus(entityId, itemUid, completed)
-            return Result.success(Unit)
-        }
         return try {
-            val status = if (completed) "completed" else "needs_action"
-            val body = mapOf(
-                "entity_id" to entityId,
-                "item" to itemUid,
-                "status" to status
+            TodoSyncManager.toggleItem(
+                context = context,
+                accountId = activeAccountId,
+                entityId = entityId,
+                itemUid = itemUid,
+                completed = completed,
+                isLocalMode = tokenManager.isDemoMode
             )
-            val response = apiService.updateTodoItem(body)
-            if (response.isSuccessful) Result.success(Unit)
-            else Result.failure(Exception("Failed to update item: ${response.code()}"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -165,22 +190,7 @@ class TodoRepository @Inject constructor(
         itemUid: String,
         newName: String
     ): Result<Unit> {
-        if (tokenManager.isDemoMode) {
-            localStore.updateItemDetails(entityId, itemUid, rename = newName)
-            return Result.success(Unit)
-        }
-        return try {
-            val body = mapOf(
-                "entity_id" to entityId,
-                "item" to itemUid,
-                "rename" to newName
-            )
-            val response = apiService.updateTodoItem(body)
-            if (response.isSuccessful) Result.success(Unit)
-            else Result.failure(Exception("Failed to rename item: ${response.code()}"))
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return updateItemDetails(entityId, itemUid, rename = newName)
     }
 
     suspend fun updateItemDetails(
@@ -192,47 +202,45 @@ class TodoRepository @Inject constructor(
         dueDate: String? = null,
         dueDatetime: String? = null
     ): Result<Unit> {
-        if (tokenManager.isDemoMode) {
-            localStore.updateItemDetails(
-                entityId, itemUid,
-                rename = rename,
-                status = status,
-                description = description,
-                due = dueDatetime ?: dueDate
-            )
-            return Result.success(Unit)
-        }
         return try {
-            val body = mutableMapOf(
-                "entity_id" to entityId,
-                "item" to itemUid
+            val existing = getCachedTodoItems(entityId)?.firstOrNull { it.uid == itemUid }
+                ?: TodoItem(
+                    uid = itemUid,
+                    summary = rename ?: "",
+                    status = TodoItemStatus.NEEDS_ACTION
+                )
+            val updated = existing.copy(
+                summary = rename ?: existing.summary,
+                status = status?.let {
+                    if (it == "completed") TodoItemStatus.COMPLETED else TodoItemStatus.NEEDS_ACTION
+                } ?: existing.status,
+                description = description ?: existing.description,
+                due = (dueDatetime ?: dueDate) ?: existing.due
             )
-            rename?.let { body["rename"] = it }
-            status?.let { body["status"] = it }
-            description?.let { body["description"] = it }
-            dueDate?.let { body["due_date"] = it }
-            dueDatetime?.let { body["due_datetime"] = it }
-            val response = apiService.updateTodoItem(body)
-            if (response.isSuccessful) Result.success(Unit)
-            else Result.failure(Exception("Failed to update item: ${response.code()}"))
+            TodoSyncManager.updateItemDetails(
+                context = context,
+                accountId = activeAccountId,
+                entityId = entityId,
+                original = existing,
+                updated = updated,
+                isLocalMode = tokenManager.isDemoMode
+            )
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     suspend fun removeItem(entityId: String, itemUid: String): Result<Unit> {
-        if (tokenManager.isDemoMode) {
-            localStore.removeItem(entityId, itemUid)
-            return Result.success(Unit)
-        }
         return try {
-            val body = mapOf(
-                "entity_id" to entityId,
-                "item" to itemUid
+            TodoSyncManager.deleteItem(
+                context = context,
+                accountId = activeAccountId,
+                entityId = entityId,
+                itemUid = itemUid,
+                isLocalMode = tokenManager.isDemoMode
             )
-            val response = apiService.removeTodoItem(body)
-            if (response.isSuccessful) Result.success(Unit)
-            else Result.failure(Exception("Failed to remove item: ${response.code()}"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }

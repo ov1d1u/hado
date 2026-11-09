@@ -5,25 +5,18 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.baer.hado.data.local.LocalTodoStore
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.TodoItem
 import com.baer.hado.data.model.TodoListFeature
+import com.baer.hado.data.sync.TodoSyncManager
 import com.baer.hado.ui.theme.HadoTheme
 import com.google.gson.Gson
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 /**
  * Translucent activity that floats only the item detail dialog over the home screen
  * (launched from a widget item tap), instead of opening the full list editor.
  */
 class ItemDetailActivity : ComponentActivity() {
-
-    // Outlives the activity so the HA/local write completes after finish().
-    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,48 +80,14 @@ class ItemDetailActivity : ComponentActivity() {
         accountId: String?,
         appWidgetId: Int?
     ) {
-        val appContext = applicationContext
-        saveScope.launch {
-            // Optimistic: reflect the edit in any widget showing this list right away.
-            WidgetStateMutator.updateItem(appContext, accountId, entityId, updated, appWidgetId)
-
-            if (isLocalMode) {
-                LocalTodoStore(appContext).updateItemDetails(
-                    entityId,
-                    original.uid,
-                    rename = updated.summary,
-                    description = updated.description,
-                    due = updated.due
-                )
-            } else {
-                val body = mutableMapOf("entity_id" to entityId, "item" to original.uid)
-                if (updated.summary != original.summary) {
-                    body["rename"] = updated.summary
-                }
-                if (updated.description != original.description) {
-                    body["description"] = updated.description ?: ""
-                }
-                val newDue = updated.due
-                if (newDue != original.due) {
-                    if (newDue == null) {
-                        body["due_date"] = ""
-                    } else if (newDue.contains("T") || (newDue.contains(" ") && newDue.length > 10)) {
-                        body["due_datetime"] = newDue.replace("T", " ")
-                    } else {
-                        body["due_date"] = newDue
-                    }
-                }
-                if (body.size > 2) {
-                    val payload = Gson().toJson(body)
-                    WidgetHttpClient(appContext, accountId).post("api/services/todo/update_item", payload)?.close()
-                }
-            }
-
-            if (appWidgetId != null) {
-                TodoWidgetWorker.enqueueOneTime(appContext, appWidgetId)
-            } else {
-                TodoWidgetWorker.enqueueOneTime(appContext)
-            }
-        }
+        TodoSyncManager.updateItemDetails(
+            context = applicationContext,
+            accountId = accountId,
+            entityId = entityId,
+            original = original,
+            updated = updated,
+            isLocalMode = isLocalMode,
+            preferredAppWidgetId = appWidgetId
+        )
     }
 }

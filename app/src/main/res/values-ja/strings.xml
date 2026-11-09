@@ -61,6 +61,7 @@
 
     <!-- Content descriptions -->
     <string name="cd_new_list">新しいリスト</string>
+    <string name="cd_more_options">その他のオプション</string>
     <string name="cd_refresh">更新</string>
     <string name="cd_settings">設定</string>
     <string name="cd_add_item">アイテムを追加</string>

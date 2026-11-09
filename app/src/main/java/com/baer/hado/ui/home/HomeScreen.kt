@@ -91,6 +91,14 @@ import com.baer.hado.R
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.TodoItem
 import com.baer.hado.ui.theme.AppSpacing
+import com.baer.hado.ui.theme.TaskSurfaces
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.HorizontalDivider
 import com.baer.hado.widget.ListIconManager
 import com.baer.hado.widget.ListIconPreview
 import com.baer.hado.widget.QuickAddActivity
@@ -116,28 +124,19 @@ fun HomeScreen(
     var showDeleteListDialog by remember { mutableStateOf(false) }
     var showSupportDialog by remember { mutableStateOf(false) }
     var showServerMenu by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
     val selectedList = uiState.todoLists.find { it.entityId == uiState.selectedListId }
     val selectedListIndex = uiState.todoLists.indexOfFirst { it.entityId == uiState.selectedListId }
         .let { index -> if (index >= 0) index else 0 }
     val selectedListName = selectedList?.attributes?.friendlyName ?: uiState.selectedListId
-    val selectedItems = uiState.itemsFor(selectedList?.entityId)
     val listSelectorState = rememberLazyListState()
 
-    // The quick add card runs as its own activity and hands the saved item back here.
+    // The quick add card runs as its own activity and writes directly to the local cache.
     val quickAddLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { result ->
+    ) {
         val listId = uiState.selectedListId ?: return@rememberLauncherForActivityResult
-        val summary = result.data?.getStringExtra(QuickAddActivity.EXTRA_ADDED_SUMMARY)
-        if (summary != null) {
-            viewModel.showPendingItem(
-                entityId = listId,
-                summary = summary,
-                due = result.data?.getStringExtra(QuickAddActivity.EXTRA_ADDED_DUE)
-            )
-        } else {
-            viewModel.loadItems(listId, force = true)
-        }
+        viewModel.onQuickAddCompleted(listId)
     }
 
     // Settings can change which lists are shown while Home sits on the back stack.
@@ -156,10 +155,6 @@ fun HomeScreen(
             }
         }
     }
-
-    val activeCount = selectedItems.count { !it.isCompleted }
-    val completedCount = selectedItems.count { it.isCompleted }
-    val overdueCount = selectedItems.count { it.isOverdue && !it.isCompleted }
 
     LaunchedEffect(uiState.isLoggedOut) {
         if (uiState.isLoggedOut) onLoggedOut()
@@ -249,35 +244,63 @@ fun HomeScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = TaskSurfaces.page,
+                    scrolledContainerColor = TaskSurfaces.page,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    if (uiState.isLocalMode) {
-                        IconButton(onClick = { showNewListDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_new_list))
-                        }
-                    }
-                    IconButton(onClick = { showSupportDialog = true }) {
-                        Icon(
-                            Icons.Default.Favorite,
-                            contentDescription = stringResource(R.string.section_support),
-                            tint = Color(0xFF9C27B0)
-                        )
-                    }
-                    IconButton(onClick = { viewModel.loadItems(force = true) }) {
-                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_refresh))
-                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
+                    }
+                    Box {
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_more_options))
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false }
+                        ) {
+                            if (uiState.isLocalMode) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.cd_new_list)) },
+                                    leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        showNewListDialog = true
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.cd_refresh)) },
+                                leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.loadItems(force = true)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.section_support)) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Favorite, contentDescription = null, tint = Color(0xFF9C27B0))
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showSupportDialog = true
+                                }
+                            )
+                        }
                     }
                 }
             )
         },
+        containerColor = TaskSurfaces.page,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (selectedList != null) {
                 FloatingActionButton(
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     onClick = {
                         quickAddLauncher.launch(
                             Intent(context, QuickAddActivity::class.java).apply {
@@ -300,34 +323,20 @@ fun HomeScreen(
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(headerToEditorGap)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.cardGap)) {
-                HomeOverviewCard(
-                    accountId = uiState.activeServerId,
-                    listEntityId = selectedList?.entityId,
-                    listName = selectedListName,
-                    activeCount = activeCount,
-                    completedCount = completedCount,
-                    overdueCount = overdueCount,
-                    compact = false,
-                    onDeleteCurrentList = if (uiState.isLocalMode && uiState.selectedListId != null) {
-                        { showDeleteListDialog = true }
-                    } else {
-                        null
-                    }
+            if (uiState.todoLists.isNotEmpty() || uiState.isLocalMode) {
+                ListTabs(
+                    lists = uiState.todoLists.map {
+                        it.entityId to (it.attributes.friendlyName ?: it.entityId)
+                    },
+                    selectedId = uiState.selectedListId,
+                    listState = listSelectorState,
+                    onSelect = viewModel::selectList,
+                    onReorder = viewModel::reorderLists,
+                    onNewList = if (uiState.isLocalMode) {
+                        { showNewListDialog = true }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth()
                 )
-
-                if (uiState.todoLists.size > 1) {
-                    ListSelector(
-                        lists = uiState.todoLists.map {
-                            it.entityId to (it.attributes.friendlyName ?: it.entityId)
-                        },
-                        selectedId = uiState.selectedListId,
-                        listState = listSelectorState,
-                        onSelect = viewModel::selectList,
-                        onReorder = viewModel::reorderLists,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
             }
 
             when {
@@ -400,7 +409,13 @@ fun HomeScreen(
                             onChanged = { viewModel.loadItems(pageList.entityId, force = true) },
                             modifier = Modifier.fillMaxSize(),
                             showTopBar = false,
-                            showListHeader = false,
+                            showListHeader = true,
+                            onDeleteList = if (uiState.isLocalMode) {
+                                {
+                                    viewModel.selectList(pageList.entityId)
+                                    showDeleteListDialog = true
+                                }
+                            } else null,
                             // Clears the floating add button so the last item stays reachable.
                             contentBottomPadding = 88.dp,
                             initialItems = uiState.itemsFor(pageList.entityId),
@@ -490,13 +505,15 @@ fun HomeScreen(
     }
 }
 
+/** Google Tasks style list tabs: text tabs with a short rounded underline; long-press drags to reorder. */
 @Composable
-private fun ListSelector(
+private fun ListTabs(
     lists: List<Pair<String, String>>,
     selectedId: String?,
     listState: LazyListState,
     onSelect: (String) -> Unit,
     onReorder: ((Int, Int) -> Unit)? = null,
+    onNewList: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var draggedId by remember { mutableStateOf<String?>(null) }
@@ -504,210 +521,151 @@ private fun ListSelector(
     val haptic = LocalHapticFeedback.current
     val currentLists by rememberUpdatedState(lists)
 
-    LazyRow(
-        state = listState,
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = AppSpacing.screenHorizontal),
-        horizontalArrangement = Arrangement.spacedBy(AppSpacing.compactGap)
-    ) {
-        items(lists, key = { it.first }) { (id, name) ->
-            val isDragging = draggedId == id
-            FilterChip(
-                selected = id == selectedId,
-                onClick = { if (draggedId == null) onSelect(id) },
-                label = {
-                    Text(
-                        text = name,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                modifier = Modifier
-                    .graphicsLayer {
-                        if (isDragging) {
-                            translationX = dragOffsetX
-                            shadowElevation = 8f
-                            scaleX = 1.05f
-                            scaleY = 1.05f
-                        }
-                    }
-                    .then(
-                        if (onReorder != null) {
-                            Modifier.pointerInput(id) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        draggedId = id
-                                        dragOffsetX = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        if (draggedId == id) {
-                                            dragOffsetX += dragAmount.x
-                                            val liveLists = currentLists
-                                            val currentIndex = liveLists.indexOfFirst { it.first == id }
-                                            if (currentIndex < 0) return@detectDragGesturesAfterLongPress
-
-                                            val itemInfo = listState.layoutInfo.visibleItemsInfo
-                                            val draggedInfo = itemInfo.firstOrNull { it.key == id }
-                                            val halfWidth = (draggedInfo?.size ?: 200) / 2
-
-                                            val targetIndex = when {
-                                                dragOffsetX > halfWidth && currentIndex < liveLists.lastIndex -> currentIndex + 1
-                                                dragOffsetX < -halfWidth && currentIndex > 0 -> currentIndex - 1
-                                                else -> return@detectDragGesturesAfterLongPress
-                                            }
-                                            onReorder(currentIndex, targetIndex)
-                                            dragOffsetX -= (targetIndex - currentIndex) * (draggedInfo?.size ?: 200).toFloat()
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        draggedId = null
-                                        dragOffsetX = 0f
-                                    },
-                                    onDragCancel = {
-                                        draggedId = null
-                                        dragOffsetX = 0f
-                                    }
-                                )
-                            }
-                        } else Modifier
-                    )
-            )
-        }
-    }
-}
-
-@Composable
-private fun HomeOverviewCard(
-    accountId: String?,
-    listEntityId: String?,
-    listName: String?,
-    activeCount: Int,
-    completedCount: Int,
-    overdueCount: Int,
-    compact: Boolean,
-    onDeleteCurrentList: (() -> Unit)?
-) {
-    val context = LocalContext.current
-    val totalCount = activeCount + completedCount
-    val resolvedIcon = remember(listEntityId) {
-        listEntityId?.let { entityId -> ListIconManager.resolveIcon(context, TokenManager.scopedKey(accountId, entityId)) }
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = AppSpacing.screenHorizontal)
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = 14.dp,
-                    top = 14.dp,
-                    end = 14.dp,
-                    bottom = 8.dp
-                ),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 8.dp)
+    Column(modifier = modifier) {
+        LazyRow(
+            state = listState,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 4.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                HomeListIcon(
-                    resolvedIcon = resolvedIcon,
-                    compact = compact
-                )
-                Text(
-                    text = listName ?: stringResource(R.string.home_choose_list),
-                    style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Box(
-                    modifier = Modifier.height(60.dp),
-                    contentAlignment = if (overdueCount > 0) Alignment.TopEnd else Alignment.CenterEnd
-                ) {
-                    if (overdueCount > 0) {
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            StatPill(
-                                text = stringResource(R.string.home_done_progress, completedCount, totalCount)
-                            )
-                            StatPill(
-                                text = stringResource(R.string.home_overdue_count, overdueCount),
-                                containerColor = MaterialTheme.colorScheme.errorContainer,
-                                contentColor = MaterialTheme.colorScheme.onErrorContainer
-                            )
+            items(lists, key = { it.first }) { (id, name) ->
+                val isDragging = draggedId == id
+                ListTab(
+                    text = name,
+                    selected = id == selectedId,
+                    onClick = { if (draggedId == null) onSelect(id) },
+                    modifier = Modifier
+                        .graphicsLayer {
+                            if (isDragging) {
+                                translationX = dragOffsetX
+                                shadowElevation = 8f
+                                shape = RoundedCornerShape(12.dp)
+                                clip = true
+                                scaleX = 1.05f
+                                scaleY = 1.05f
+                            }
                         }
-                    } else {
-                        StatPill(
-                            text = stringResource(R.string.home_done_progress, completedCount, totalCount)
+                        .then(
+                            if (isDragging) Modifier.background(TaskSurfaces.card) else Modifier
                         )
-                    }
-                }
-                if (onDeleteCurrentList != null) {
-                    IconButton(onClick = onDeleteCurrentList) {
+                        .then(
+                            if (onReorder != null) {
+                                Modifier.pointerInput(id) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            draggedId = id
+                                            dragOffsetX = 0f
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            if (draggedId == id) {
+                                                dragOffsetX += dragAmount.x
+                                                val liveLists = currentLists
+                                                val currentIndex = liveLists.indexOfFirst { it.first == id }
+                                                if (currentIndex < 0) return@detectDragGesturesAfterLongPress
+
+                                                val itemInfo = listState.layoutInfo.visibleItemsInfo
+                                                val draggedInfo = itemInfo.firstOrNull { it.key == id }
+                                                val halfWidth = (draggedInfo?.size ?: 200) / 2
+
+                                                val targetIndex = when {
+                                                    dragOffsetX > halfWidth && currentIndex < liveLists.lastIndex -> currentIndex + 1
+                                                    dragOffsetX < -halfWidth && currentIndex > 0 -> currentIndex - 1
+                                                    else -> return@detectDragGesturesAfterLongPress
+                                                }
+                                                onReorder(currentIndex, targetIndex)
+                                                dragOffsetX -= (targetIndex - currentIndex) * (draggedInfo?.size ?: 200).toFloat()
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            draggedId = null
+                                            dragOffsetX = 0f
+                                        },
+                                        onDragCancel = {
+                                            draggedId = null
+                                            dragOffsetX = 0f
+                                        }
+                                    )
+                                }
+                            } else Modifier
+                        )
+                )
+            }
+            if (onNewList != null) {
+                item(key = "new-list-tab") {
+                    Row(
+                        modifier = Modifier
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onNewList)
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(
-                            Icons.Default.Delete,
-                            contentDescription = stringResource(R.string.cd_delete_list),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.cd_new_list),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
                     }
                 }
             }
-
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
     }
 }
 
 @Composable
-private fun HomeListIcon(
-    resolvedIcon: ListIconManager.ResolvedIcon?,
-    compact: Boolean
-) {
-    val iconSize = if (compact) 24.dp else 30.dp
-
-    ListIconPreview(
-        resolvedIcon = resolvedIcon,
-        size = iconSize,
-        emojiColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
-        fallbackEmoji = "📋"
-    )
-}
-
-@Composable
-private fun StatPill(
+private fun ListTab(
     text: String,
-    modifier: Modifier = Modifier,
-    containerColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-    contentColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier,
-        color = containerColor,
-        shape = MaterialTheme.shapes.small
+    Column(
+        modifier = modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp)
+            .width(IntrinsicSize.Max),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelMedium,
-            color = contentColor,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp)
+            )
+        }
+        // Underline matches the label width, like Google Tasks.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+        ) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)
+                        )
+                )
+            }
+        }
     }
 }
 
@@ -722,10 +680,9 @@ private fun EmptyStateCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        ),
+        modifier = modifier.fillMaxWidth().padding(top = 8.dp),
+        shape = TaskSurfaces.cardShape,
+        colors = CardDefaults.cardColors(containerColor = TaskSurfaces.card),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Text(

@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.baer.hado.R
 import com.baer.hado.data.local.LocalTodoStore
+import com.baer.hado.data.local.TodoCacheManager
 import com.baer.hado.data.local.TokenManager
 import com.baer.hado.data.model.SimpleState
 import com.baer.hado.ui.theme.HadoTheme
@@ -999,26 +1000,40 @@ private suspend fun fetchAvailableLists(
     accountId: String?
 ): List<Triple<String, String, String?>> {
     return withContext(Dispatchers.IO) {
-        try {
-            val tokenManager = TokenManager(context)
-            if (tokenManager.isDemoMode) {
-                val localStore = LocalTodoStore(context)
-                return@withContext localStore.getLists().map { list ->
+        val tokenManager = TokenManager(context)
+        if (tokenManager.isDemoMode) {
+            val localStore = LocalTodoStore(context)
+            return@withContext localStore.getLists().map { list ->
+                Triple(
+                    list.entityId,
+                    list.attributes.friendlyName ?: list.entityId,
+                    null as String?
+                )
+            }
+        }
+
+        val resolvedAccountId = accountId ?: return@withContext emptyList()
+        fun cachedFallback(): List<Triple<String, String, String?>> {
+            return TodoCacheManager.loadLists(context, resolvedAccountId)
+                ?.map { list ->
                     Triple(
                         list.entityId,
                         list.attributes.friendlyName ?: list.entityId,
                         null as String?
                     )
                 }
-            }
+                ?.sortedBy { it.second }
+                .orEmpty()
+        }
 
-            val httpClient = WidgetHttpClient(context, accountId ?: return@withContext emptyList())
-            if (!httpClient.isLoggedIn) return@withContext emptyList()
+        try {
+            val httpClient = WidgetHttpClient(context, resolvedAccountId)
+            if (!httpClient.isLoggedIn) return@withContext cachedFallback()
 
-            val response = httpClient.get("api/states") ?: return@withContext emptyList()
+            val response = httpClient.get("api/states") ?: return@withContext cachedFallback()
             val json = response.use { resp ->
-                if (!resp.isSuccessful) return@withContext emptyList()
-                resp.body?.string() ?: return@withContext emptyList()
+                if (!resp.isSuccessful) return@withContext cachedFallback()
+                resp.body?.string() ?: return@withContext cachedFallback()
             }
 
             val type = object : TypeToken<List<SimpleState>>() {}.type
@@ -1034,7 +1049,7 @@ private suspend fun fetchAvailableLists(
                 }
                 .sortedBy { it.second }
         } catch (_: Exception) {
-            emptyList()
+            cachedFallback()
         }
     }
 }
